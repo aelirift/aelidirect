@@ -192,7 +192,7 @@ Test against port {target_port} (http://127.0.0.1:{target_port})
 
     # Call LLM to generate test plan
     from llm_client import call_llm, extract_response
-    from main import config, _get_provider
+    from state import config, _get_provider
 
     prov = _get_provider()
     messages = [

@@ -1650,6 +1650,18 @@ async function sendMessage() {
         '</div>', true);
     });
 
+    evtSource.addEventListener('phase', function(e) {
+      const d = JSON.parse(e.data);
+      const labels = {coding: 'Coding', testing: 'Testing', post_test: 'Post-Test'};
+      const colors = {coding: '#26a1ff', testing: '#00e5ff', post_test: '#b388ff'};
+      const label = labels[d.phase] || d.phase;
+      const color = colors[d.phase] || '#888';
+      addMsg('system',
+        '<div style="border-bottom:1px solid ' + color + '33; padding:4px 0; margin:8px 0 4px 0;">' +
+        '<span style="color:' + color + '; font-weight:bold; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">' +
+        label + '</span></div>', true);
+    });
+
     evtSource.addEventListener('test_phase', function(e) {
       const d = JSON.parse(e.data);
       const tag = '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ';
@@ -1665,31 +1677,74 @@ async function sendMessage() {
           tag + 'Planning tests (iteration ' + d.iteration + ')</div>', true);
       } else if (d.status === 'running') {
         showSpinner('Test Agent: running ' + d.test_count + ' tests...');
-        addMsg('system',
-          '<div style="border-left:3px solid #00e5ff; padding:6px 12px; margin:4px 0; background:#0a1a2a;">' +
-          tag + 'Running ' + d.test_count + ' tests (iteration ' + d.iteration + ')</div>', true);
+        // Collapsible test plan
+        var planHtml = '<div style="border:1px solid #00e5ff44; border-radius:8px; margin:4px 0; background:#0a1a2a;">';
+        planHtml += '<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'" ' +
+          'style="padding:10px 12px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
+        planHtml += '<span>' + tag + 'Running ' + d.test_count + ' tests (iter ' + d.iteration + ')</span>';
+        planHtml += '<span style="color:#00e5ff; font-size:0.8em;">click to expand</span></div>';
+        planHtml += '<div style="display:none; padding:0 12px 10px 12px; border-top:1px solid #00e5ff22;">';
+        if (d.plan_summary) planHtml += '<div style="color:#aaa; font-size:0.85em; margin:8px 0;">' + escHtml(d.plan_summary) + '</div>';
+        if (d.tests && d.tests.length > 0) {
+          planHtml += '<div style="font-size:0.85em;">';
+          d.tests.forEach(function(t) {
+            planHtml += '<div style="color:#ccc; padding:2px 0;">- <span style="color:#00e5ff;">[' + escHtml(t.type) + ']</span> ' +
+              '<span style="color:#fff;">' + escHtml(t.id) + '</span>: ' + escHtml(t.name) + '</div>';
+          });
+          planHtml += '</div>';
+        }
+        planHtml += '</div></div>';
+        addMsg('system', planHtml, true);
       } else if (d.status === 'all_passed') {
-        addMsg('system',
-          '<div style="border:1px solid #5fe88a; border-radius:8px; padding:10px; margin:4px 0; background:#0a2a1a;">' +
-          '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ' +
-          '<span style="color:#5fe88a; font-weight:bold;"> All ' + d.passed + ' tests passed</span>' +
-          '</div>', true);
+        // Collapsible results
+        var html = '<div style="border:1px solid #5fe88a; border-radius:8px; margin:4px 0; background:#0a2a1a;">';
+        html += '<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'" ' +
+          'style="padding:10px 12px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
+        html += '<span>' + tag + '<span style="color:#5fe88a; font-weight:bold;">All ' + d.passed + ' tests passed</span></span>';
+        html += '<span style="color:#5fe88a; font-size:0.8em;">click for details</span></div>';
+        html += '<div style="display:none; padding:0 12px 10px 12px; border-top:1px solid #5fe88a22; font-size:0.85em;">';
+        if (d.results) {
+          d.results.forEach(function(r) {
+            html += '<div style="color:#5fe88a; padding:2px 0;">PASS ' + escHtml(r.id) + ': ' + escHtml(r.name) + '</div>';
+          });
+        }
+        html += '</div></div>';
+        addMsg('system', html, true);
       } else if (d.status === 'error') {
         addMsg('system',
           '<div style="border-left:3px solid #ff5555; padding:6px 12px; margin:4px 0; background:#2a0a0a;">' +
-          '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ' +
-          '<span style="color:#ff5555;"> Error: ' + escHtml(d.error || '') + '</span></div>', true);
+          tag + '<span style="color:#ff5555;"> Error: ' + escHtml(d.error || '') + '</span></div>', true);
       }
     });
 
     evtSource.addEventListener('test_feedback', function(e) {
       const d = JSON.parse(e.data);
-      addMsg('system',
-        '<div style="border:1px solid #ff5555; border-radius:8px; padding:10px; margin:4px 0; background:#2a0a0a;">' +
-        '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ' +
-        '<span style="color:#ff5555; font-weight:bold;"> ' + d.failed + ' tests failed</span> (' + d.passed + ' passed) &mdash; ' +
-        'feeding failures back to coder (iteration ' + d.iteration + ')' +
-        '</div>', true);
+      // Collapsible failure details
+      var html = '<div style="border:1px solid #ff5555; border-radius:8px; margin:4px 0; background:#2a0a0a;">';
+      html += '<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'" ' +
+        'style="padding:10px 12px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
+      html += '<span><span style="color:#00e5ff; font-weight:bold;">Test Agent:</span>' +
+        '<span style="color:#ff5555; font-weight:bold;"> ' + d.failed + ' failed</span>, ' +
+        '<span style="color:#5fe88a;">' + d.passed + ' passed</span>' +
+        ' &mdash; feeding back to coder (iter ' + d.iteration + ')</span>';
+      html += '<span style="color:#ff5555; font-size:0.8em;">click for details</span></div>';
+      html += '<div style="display:none; padding:0 12px 10px 12px; border-top:1px solid #ff555522; font-size:0.85em;">';
+      if (d.results) {
+        d.results.forEach(function(r) {
+          if (r.status === 'pass') {
+            html += '<div style="color:#5fe88a; padding:2px 0;">PASS ' + escHtml(r.id) + ': ' + escHtml(r.name) + '</div>';
+          } else {
+            html += '<div style="color:#ff5555; padding:3px 0; font-weight:bold;">FAIL ' + escHtml(r.id) + ': ' + escHtml(r.name) + '</div>';
+            if (r.errors) {
+              r.errors.forEach(function(err) {
+                html += '<div style="color:#ff8888; padding:1px 0 1px 16px; font-size:0.9em;">' + escHtml(err) + '</div>';
+              });
+            }
+          }
+        });
+      }
+      html += '</div></div>';
+      addMsg('system', html, true);
       showSpinner('Test Agent: feeding failures to coder (iter ' + d.iteration + ')...');
     });
 
@@ -1698,15 +1753,20 @@ async function sendMessage() {
       if (d.status === 'running') {
         showSpinner('TD Analysis running...');
       } else if (d.status === 'complete' && d.review) {
-        addMsg('system',
-          '<div style="border:1px solid #b388ff; border-radius:8px; padding:12px; margin:4px 0; background:#1a0a2a;">' +
-          '<div style="color:#b388ff; font-weight:bold; margin-bottom:6px;">TD Analysis</div>' +
-          '<div style="white-space:pre-wrap; color:#ccc; line-height:1.5; font-size:0.9em;">' + escHtml(d.review) + '</div>' +
-          '</div>', true);
+        // Collapsible TD review
+        var html = '<div style="border:1px solid #b388ff; border-radius:8px; margin:4px 0; background:#1a0a2a;">';
+        html += '<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'" ' +
+          'style="padding:10px 12px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
+        html += '<span style="color:#b388ff; font-weight:bold;">TD Analysis</span>';
+        html += '<span style="color:#b388ff; font-size:0.8em;">click to expand</span></div>';
+        html += '<div style="display:none; padding:0 12px 12px 12px; border-top:1px solid #b388ff22;">';
+        html += '<div style="white-space:pre-wrap; color:#ccc; line-height:1.5; font-size:0.9em; margin-top:8px;">' + escHtml(d.review) + '</div>';
+        html += '</div></div>';
+        addMsg('system', html, true);
       } else if (d.status === 'error') {
         addMsg('system',
           '<div style="border-left:3px solid #ff5555; padding:6px 12px; margin:4px 0; background:#2a0a0a;">' +
-          '<span style="color:#b388ff; font-weight:bold;">TD Analysis:</span> ' +
+          '<span style="color:#b388ff; font-weight:bold;">TD Analysis:</span>' +
           '<span style="color:#ff5555;"> Error: ' + escHtml(d.error || '') + '</span></div>', true);
       }
     });

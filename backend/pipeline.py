@@ -181,8 +181,10 @@ async def direct_stream(message: str, project_dir: str):
         _max_test_fix = MAX_TEST_FIX_ITERATIONS
         _test_evidence = []  # Collected for TD review
         _last_response_text = ""    # Captures final agent response for TD review
+        _phase = "coding"           # Current phase: coding, testing, post_test
 
         try:
+            yield sse_event("phase", {"phase": "coding"})
             while action_turns < max_turns:
                 total_turns += 1
                 yield sse_event("turn", {"turn": total_turns, "action_turns": action_turns, "max": max_turns})
@@ -349,10 +351,14 @@ async def direct_stream(message: str, project_dir: str):
 
             # ── TEST PHASE (runs after agent loop, regardless of how it ended) ──
             # If agent made code changes: restart branch, run tests, feed failures back.
-            # Uses its own loop so fix cycles re-enter the agent loop above.
+            # On failure, injects test results as user message and RE-ENTERS the same
+            # main agent loop above (no duplicate loop — one pipeline).
             while (_made_code_changes and _test_fix_iteration < _max_test_fix):
                 try:
                     from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
+
+                    _phase = "testing"
+                    yield sse_event("phase", {"phase": "testing"})
 
                     # Restart branch so tests hit the new code
                     if project_path.resolve() == BRANCH_ROOT.resolve():
@@ -389,9 +395,14 @@ async def direct_stream(message: str, project_dir: str):
                         break
 
                     tc_count = len(plan.get("test_cases", []))
+                    # Send plan details so frontend can display them
+                    plan_details = [{"id": tc.get("id", "?"), "name": tc.get("name", ""), "type": tc.get("type", "")}
+                                    for tc in plan.get("test_cases", [])]
                     yield sse_event("test_phase", {
                         "status": "running", "test_count": tc_count,
                         "iteration": _test_fix_iteration,
+                        "plan_summary": plan.get("summary", ""),
+                        "tests": plan_details,
                     })
 
                     results = await run_tests(plan, target_port=_test_port)
@@ -405,30 +416,48 @@ async def direct_stream(message: str, project_dir: str):
                         "details": results,
                     })
 
+                    # Send per-test results for frontend display
+                    _results_summary = []
+                    for r in results:
+                        entry = {"id": r.get("id", "?"), "name": r.get("name", ""), "status": r.get("status", "?")}
+                        if r.get("status") != "pass":
+                            # Include failure details
+                            fail_reasons = []
+                            for det in r.get("details", []):
+                                if isinstance(det, dict) and det.get("assertion_failed"):
+                                    fail_reasons.append(det["assertion_failed"][:200])
+                            entry["errors"] = fail_reasons[:5]
+                        _results_summary.append(entry)
+
                     if not failed:
                         yield sse_event("test_phase", {
                             "status": "all_passed", "passed": passed,
                             "iteration": _test_fix_iteration,
+                            "results": _results_summary,
                         })
                         break  # Tests passed, exit test loop
 
-                    # Tests failed — feed failures back to agent
-                    failure_msg = format_failures_as_message(results, plan)
+                    # Tests failed — send detailed results
                     yield sse_event("test_feedback", {
                         "status": "failures_found", "passed": passed,
                         "failed": len(failed), "iteration": _test_fix_iteration,
+                        "results": _results_summary,
                     })
-                    # Inject into same conversation (all prior context preserved)
+
+                    # Inject failures into same conversation, re-enter MAIN loop
+                    failure_msg = format_failures_as_message(results, plan)
                     if _last_response_text:
                         messages.append({"role": "assistant", "content": _last_response_text})
                     messages.append({"role": "user", "content": failure_msg})
                     action_turns = 0  # Reset turns
-
-                    # Re-enter agent loop for fix attempt
                     _last_response_text = ""
+
+                    # Re-enter the SAME main agent loop (one pipeline, full tool dispatch)
+                    yield sse_event("phase", {"phase": "coding"})
                     while action_turns < max_turns:
                         total_turns += 1
                         yield sse_event("turn", {"turn": total_turns, "action_turns": action_turns, "max": max_turns})
+
                         raw = await asyncio.to_thread(
                             call_llm, selected, prov["api_key"], prov["base_url"],
                             prov["model"], messages, DIRECT_TOOL_DEFS, 0.3,
@@ -450,19 +479,136 @@ async def direct_stream(message: str, project_dir: str):
                             for tc in parsed["tool_calls"]
                         ]
                         messages.append(assistant_msg)
+
                         all_readonly = all(_is_readonly_tool_call(tc) for tc in parsed["tool_calls"])
 
                         for tc in parsed["tool_calls"]:
                             name = tc["function_name"]
                             args = tc["arguments"]
                             yield sse_event("tool_call", {"name": name, "args": args})
+
                             try:
-                                result = execute_tool(name, args, project_dir=project_path)
+                                if name == "deploy_pod" and project_path.name == "aelidirect_platform":
+                                    result = "ERROR: This is the platform itself — use restart_platform() instead."
+                                elif name == "deploy_pod":
+                                    from tools import write_project_env as _wpd
+                                    _env = read_project_env(project_path)
+                                    _port = int(_env.get("pod_port", 0)) or get_available_port(project_name) or 0
+                                    if _port:
+                                        _ver = int(_env.get("deploy_version", "0")) + 1
+                                        deploy_result = spin_up_pod(project_path, project_name, _port, _ver)
+                                        if deploy_result["success"]:
+                                            _direct_state["port"] = _port
+                                            _env2 = read_project_env(project_path)
+                                            _extra = {k: v for k, v in _env2.items()
+                                                      if k not in ("project_name", "project_dir", "tech_stack", "os", "python", "pod_port", "deploy_version")}
+                                            _extra["Pod Port"] = str(_port)
+                                            _extra["Deploy Version"] = str(_ver)
+                                            _wpd(project_path, _env2.get("project_name", project_name),
+                                                 _env2.get("tech_stack", "auto"), _extra if _extra else None)
+                                            result = f"DEPLOYED: {_pod_url(_port)} (v{_ver})\nPod: {deploy_result['pod_name']}"
+                                            yield sse_event("pod_url", {"url": _pod_url(_port)})
+                                        else:
+                                            result = f"FAILED at {deploy_result['phase']}: {deploy_result['message']}\nLogs: {deploy_result.get('logs', '')[:500]}"
+                                    else:
+                                        result = "FAILED: No available ports"
+                                elif name == "restart_platform":
+                                    import subprocess as _sp
+                                    try:
+                                        r = _sp.run(
+                                            ["systemctl", "--user", "restart", "aelidirect-branch"],
+                                            capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+                                        )
+                                        if r.returncode == 0:
+                                            import time as _time
+                                            _time.sleep(2)
+                                            _check = http_get(BRANCH_PORT, "/")
+                                            if _check.startswith("HTTP 200"):
+                                                result = "Branch restarted on port 10101 and healthy."
+                                            else:
+                                                result = f"Branch restarted but health check failed: {_check[:200]}"
+                                        else:
+                                            result = f"Branch restart failed: {r.stderr}"
+                                    except Exception as e:
+                                        result = f"Restart error: {e}"
+                                elif name == "http_check":
+                                    _port = _direct_state.get("port", 0)
+                                    result = http_get(_port, args.get("path", "/")) if _port else "No pod running"
+                                elif name == "bash":
+                                    import subprocess as _sp
+                                    cmd = args.get("command", "")
+                                    try:
+                                        r = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_LONG, cwd=str(project_path))
+                                        result = f"exit code: {r.returncode}\n"
+                                        if r.stdout: result += f"stdout:\n{r.stdout[:TRUNCATE_STDOUT]}\n"
+                                        if r.stderr: result += f"stderr:\n{r.stderr[:TRUNCATE_STDERR]}"
+                                        if not r.stdout and not r.stderr: result += "(no output)"
+                                    except _sp.TimeoutExpired:
+                                        result = "Command timed out (60s limit)"
+                                elif name == "git_status":
+                                    import subprocess as _sp
+                                    if not (project_path / ".git").exists():
+                                        _sp.run(["git", "init"], cwd=str(project_path), capture_output=True)
+                                        _sp.run(["git", "add", "."], cwd=str(project_path), capture_output=True)
+                                        _sp.run(["git", "commit", "-m", "Initial commit"],
+                                               cwd=str(project_path), capture_output=True,
+                                               env={**__import__('os').environ, "GIT_AUTHOR_NAME": "aelidirect",
+                                                    "GIT_AUTHOR_EMAIL": "aelidirect@local",
+                                                    "GIT_COMMITTER_NAME": "aelidirect",
+                                                    "GIT_COMMITTER_EMAIL": "aelidirect@local"})
+                                    r = _sp.run(["git", "status"], cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
+                                    result = r.stdout + r.stderr
+                                elif name == "git_diff":
+                                    import subprocess as _sp
+                                    r = _sp.run(["git", "diff"], cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
+                                    result = r.stdout[:TRUNCATE_GIT_DIFF] or "(no changes)"
+                                elif name == "git_log":
+                                    import subprocess as _sp
+                                    n = int(args.get("n", 5))
+                                    r = _sp.run(["git", "log", "--oneline", f"-{n}"], cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
+                                    result = r.stdout or "(no commits)"
+                                elif name == "git_commit":
+                                    import subprocess as _sp
+                                    _commit_msg = args.get("message", "Update")
+                                    _sp.run(["git", "add", "."], cwd=str(project_path), capture_output=True)
+                                    r = _sp.run(["git", "commit", "-m", _commit_msg],
+                                               cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
+                                               env={**__import__('os').environ, "GIT_AUTHOR_NAME": "aelidirect",
+                                                    "GIT_AUTHOR_EMAIL": "aelidirect@local",
+                                                    "GIT_COMMITTER_NAME": "aelidirect",
+                                                    "GIT_COMMITTER_EMAIL": "aelidirect@local"})
+                                    result = r.stdout + r.stderr
+                                elif name == "memory_save":
+                                    key = args.get("key", "").replace("/", "_").replace("..", "")
+                                    content = args.get("content", "")
+                                    mem_dir = MEMORY_DIR / project_path.name
+                                    mem_dir.mkdir(exist_ok=True)
+                                    (mem_dir / f"{key}.md").write_text(content)
+                                    result = f"Saved memory: {key} ({len(content)} chars)"
+                                elif name == "memory_load":
+                                    key = args.get("key", "").replace("/", "_").replace("..", "")
+                                    mem_path = MEMORY_DIR / project_path.name / f"{key}.md"
+                                    result = mem_path.read_text() if mem_path.exists() else f"Memory '{key}' not found"
+                                elif name == "memory_list":
+                                    mem_dir = MEMORY_DIR / project_path.name
+                                    if mem_dir.exists():
+                                        keys = [f.stem for f in sorted(mem_dir.glob("*.md"))]
+                                        result = "Saved memories:\n" + "\n".join(f"  - {k}" for k in keys) if keys else "No memories saved"
+                                    else:
+                                        result = "No memories saved"
+                                elif name == "test_agent":
+                                    from test_agent import handle_test_agent
+                                    result = await handle_test_agent(args)
+                                else:
+                                    result = execute_tool(name, args, project_dir=project_path)
                             except Exception as e:
                                 result = f"Tool error in {name}: {e}"
+
                             yield sse_event("tool_result", {"name": name, "result": result[:TRUNCATE_TOOL_RESULT]})
                             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
                             _used_any_tools = True
+                            if name in ("edit_file", "patch_file") and not result.startswith("ERROR"):
+                                _made_code_changes = True
 
                         if not all_readonly:
                             action_turns += 1
@@ -476,6 +622,10 @@ async def direct_stream(message: str, project_dir: str):
                     yield sse_event("test_phase", {"status": "error", "error": str(_te)[:200]})
                     break
             # ── END TEST PHASE ──────────────────────────────────
+
+            # ── POST-TEST PHASE ──────────────────────────────────
+            _phase = "post_test"
+            yield sse_event("phase", {"phase": "post_test"})
 
             # Extract final response text for TD review
             _final_response = _last_response_text

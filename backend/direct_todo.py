@@ -9,9 +9,9 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from constants import TODOS_DIR, HEARTBEATS_DIR, TRUNCATE_TODO_RESULT
 
-TODO_DIR = Path(__file__).parent / ".direct_todos"
-TODO_DIR.mkdir(exist_ok=True)
+TODO_DIR = TODOS_DIR
 
 
 def _now():
@@ -88,12 +88,12 @@ def update_todo(project_name: str, todo_id: str, status: str, result: str = "") 
                     t["started_at"] = _now()
                 t["attempts"] = t.get("attempts", 0) + 1
                 if result:
-                    t["last_result"] = result[:10000]
+                    t["last_result"] = result[:TRUNCATE_TODO_RESULT]
                     t["result_status"] = _classify_result(result)
             elif status == "done":
                 now = _now()
                 t["completed_at"] = now
-                t["last_result"] = result[:10000]
+                t["last_result"] = result[:TRUNCATE_TODO_RESULT]
                 t["result_status"] = _classify_result(result)
                 # Compute duration from started_at
                 started = t.get("started_at")
@@ -130,8 +130,7 @@ def get_pending_todos(project_name: str) -> list[dict]:
 
 # ── Heartbeat config ──
 
-HEARTBEAT_DIR = Path(__file__).parent / ".direct_heartbeats"
-HEARTBEAT_DIR.mkdir(exist_ok=True)
+HEARTBEAT_DIR = HEARTBEATS_DIR
 
 
 def _hb_path(project_name: str) -> Path:
@@ -167,7 +166,7 @@ def record_heartbeat_run(project_name: str, todo_id: str, task: str, result: str
         "timestamp": _now(),
         "todo_id": todo_id,
         "task": task,
-        "result": result[:10000],
+        "result": result[:TRUNCATE_TODO_RESULT],
     })
     # Keep last 50 runs
     hb["history"] = hb["history"][-50:]

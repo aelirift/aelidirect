@@ -13,6 +13,20 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from starlette.responses import Response
 
+from constants import (
+    PROD_ROOT, BRANCH_ROOT, PROD_PORT, BRANCH_PORT, CONFIG_FILE,
+    MEMORY_DIR, CONVERSATIONS_DIR, TD_REPORTS_DIR,
+    PLATFORM_PROJECT_NAME, PLATFORM_SOURCE_FILES,
+    PLATFORM_DATA_DIRS, PLATFORM_DATA_FILES,
+    MAX_ACTION_TURNS, MAX_TEST_FIX_ITERATIONS,
+    CONVERSATION_HISTORY_LIMIT, CONVERSATION_TOKEN_BUDGET, CHARS_PER_TOKEN,
+    SUMMARIZE_BATCH_SIZE, TD_ANALYSIS_RECENT_COUNT,
+    SUBPROCESS_TIMEOUT, SUBPROCESS_TIMEOUT_LONG, LLM_STREAM_TIMEOUT,
+    HEALTH_CHECK_TIMEOUT, SAFE_NAME_MAX_LENGTH,
+    TRUNCATE_TOOL_RESULT, TRUNCATE_STDOUT, TRUNCATE_STDERR,
+    TRUNCATE_GIT_DIFF, TRUNCATE_RESULT_PREVIEW, TRUNCATE_RESPONSE_PREVIEW,
+    TRUNCATE_TODO_RESULT, TRUNCATE_TD_INPUT, TRUNCATE_TD_CONTEXT,
+)
 from llm_client import call_llm, extract_response, LLMError
 from tools import TOOL_DEFINITIONS, execute_tool
 from pod import spin_up_pod, http_get, get_available_port
@@ -39,7 +53,7 @@ config = {
     "pod_host": "100.92.245.67",
 }
 
-CONFIG_FILE = Path(__file__).parent / ".config.json"
+# CONFIG_FILE imported from constants
 if CONFIG_FILE.exists():
     try:
         saved = json.loads(CONFIG_FILE.read_text())
@@ -69,9 +83,6 @@ def _pod_url(port: int) -> str:
 def sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
-
-# ── Agent limits ─────────────────────────────────────────────────────
-MAX_ACTION_TURNS = 150  # Single source of truth for all pipelines
 
 # ── Read-only tool detection ──────────────────────────────────────────
 READ_ONLY_TOOLS = frozenset({
@@ -197,23 +208,16 @@ DIRECT_AGENT_PROMPT = (
 
 # ── State & storage dirs ──────────────────────────────────────────────
 _direct_state = {"project_dir": None, "project_name": "", "port": 0}
-_DIRECT_MEMORY_DIR = Path(__file__).parent / ".direct_memory"
-_DIRECT_MEMORY_DIR.mkdir(exist_ok=True)
-_DIRECT_CONVERSATIONS_DIR = Path(__file__).parent / ".direct_conversations"
-_DIRECT_CONVERSATIONS_DIR.mkdir(exist_ok=True)
-
-_CONVERSATION_HISTORY_LIMIT = 50
-_CONVERSATION_TOKEN_BUDGET = 50_000
-_CHARS_PER_TOKEN = 4
+# Storage dirs and limits imported from constants
 
 
 def _estimate_tokens(text: str) -> int:
-    return len(text) // _CHARS_PER_TOKEN
+    return len(text) // CHARS_PER_TOKEN
 
 
 def _save_conversation(project_name: str, user_message: str, messages: list, test_evidence: list = None):
     from datetime import datetime, timezone
-    conv_dir = _DIRECT_CONVERSATIONS_DIR / project_name
+    conv_dir = CONVERSATIONS_DIR / project_name
     conv_dir.mkdir(exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
 
@@ -250,16 +254,16 @@ def _save_conversation(project_name: str, user_message: str, messages: list, tes
 
 
 def _load_conversation_history(project_name: str, prov: dict = None, selected: str = None) -> str:
-    conv_dir = _DIRECT_CONVERSATIONS_DIR / project_name
+    conv_dir = CONVERSATIONS_DIR / project_name
     if not conv_dir.exists():
         return ""
     conv_files = sorted(conv_dir.glob("*.json"), key=lambda p: p.name)
     if not conv_files:
         return ""
-    if len(conv_files) > _CONVERSATION_HISTORY_LIMIT:
-        for old_file in conv_files[:-_CONVERSATION_HISTORY_LIMIT]:
+    if len(conv_files) > CONVERSATION_HISTORY_LIMIT:
+        for old_file in conv_files[:-CONVERSATION_HISTORY_LIMIT]:
             old_file.unlink()
-        conv_files = conv_files[-_CONVERSATION_HISTORY_LIMIT:]
+        conv_files = conv_files[-CONVERSATION_HISTORY_LIMIT:]
 
     conversations = []
     for f in conv_files:
@@ -287,7 +291,7 @@ def _load_conversation_history(project_name: str, prov: dict = None, selected: s
     total_text = "\n\n".join(_conv_to_text(c) for c in conversations)
     total_tokens = _estimate_tokens(total_text)
 
-    if total_tokens > _CONVERSATION_TOKEN_BUDGET and prov and prov.get("api_key"):
+    if total_tokens > CONVERSATION_TOKEN_BUDGET and prov and prov.get("api_key"):
         _summarize_old_conversations(conversations, prov, selected)
         total_text = "\n\n".join(_conv_to_text(c) for c in conversations)
 
@@ -556,17 +560,7 @@ async def get_platform_docs():
 
 
 # ── Branch vs Prod comparison ──────────────────────────────────────────
-_PROD_ROOT = Path(__file__).parent.parent
-_BRANCH_ROOT = Path("/home/aeli/projects/aelidirect_branch")
-_IS_BRANCH = _PROD_ROOT.resolve() == _BRANCH_ROOT.resolve()
-_PLATFORM_SOURCE_FILES = [
-    "frontend/index.html",
-    "backend/main.py",
-    "backend/tools.py",
-    "backend/direct_todo.py",
-    "backend/llm_client.py",
-    "backend/pod.py",
-]
+_IS_BRANCH = PROD_ROOT.resolve() == BRANCH_ROOT.resolve()
 
 
 @app.get("/api/platform/branch-status")
@@ -574,14 +568,14 @@ async def get_branch_status():
     """Compare branch (10101) vs prod (10100) source files."""
     if _IS_BRANCH:
         return {"has_changes": False, "is_branch": True}
-    if not _BRANCH_ROOT.exists():
+    if not BRANCH_ROOT.exists():
         return {"has_changes": False, "error": "Branch directory not found"}
 
     import hashlib
     changes = []
-    for rel in _PLATFORM_SOURCE_FILES:
-        prod_file = _PROD_ROOT / rel
-        branch_file = _BRANCH_ROOT / rel
+    for rel in PLATFORM_SOURCE_FILES:
+        prod_file = PROD_ROOT / rel
+        branch_file = BRANCH_ROOT / rel
         prod_exists = prod_file.exists()
         branch_exists = branch_file.exists()
 
@@ -607,25 +601,11 @@ async def get_branch_status():
     return {
         "has_changes": len(changes) > 0,
         "changes": changes,
-        "branch_path": str(_BRANCH_ROOT),
+        "branch_path": str(BRANCH_ROOT),
     }
 
 
-_PLATFORM_DATA_DIRS = [
-    "backend/.direct_conversations",
-    "backend/.direct_heartbeats",
-    "backend/.direct_todos",
-    "backend/.direct_memory",
-    "backend/.td_reports",
-    "projects",
-]
-_PLATFORM_DATA_FILES = [
-    "backend/.config.json",
-    "backend/.ports.json",
-    "SPEC.md",
-    "CONTEXT_MAP.md",
-    "DATA_FLOW.md",
-]
+# PLATFORM_DATA_DIRS and PLATFORM_DATA_FILES imported from constants
 
 
 @app.get("/api/platform/heartbeat-progress")
@@ -638,7 +618,7 @@ async def wipe_branch():
     """Reset branch to match prod — copies source, data, and config."""
     if _IS_BRANCH:
         return {"ok": False, "error": "Cannot wipe from branch server — use prod (10100)"}
-    if not _BRANCH_ROOT.exists():
+    if not BRANCH_ROOT.exists():
         return {"ok": False, "error": "Branch directory not found"}
     # Block wipe while main is actively editing branch files
     if _heartbeat_progress.get("active") and _heartbeat_progress.get("project") == "aelidirect_platform":
@@ -649,10 +629,10 @@ async def wipe_branch():
     errors = []
 
     # 1. Source files
-    for rel in _PLATFORM_SOURCE_FILES:
+    for rel in PLATFORM_SOURCE_FILES:
         try:
-            prod_file = _PROD_ROOT / rel
-            branch_file = _BRANCH_ROOT / rel
+            prod_file = PROD_ROOT / rel
+            branch_file = BRANCH_ROOT / rel
             if prod_file.exists():
                 branch_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(prod_file), str(branch_file))
@@ -661,10 +641,10 @@ async def wipe_branch():
             errors.append(f"{rel}: {e}")
 
     # 2. Data directories (full sync, preserve symlinks)
-    for rel in _PLATFORM_DATA_DIRS:
+    for rel in PLATFORM_DATA_DIRS:
         try:
-            prod_dir = _PROD_ROOT / rel
-            branch_dir = _BRANCH_ROOT / rel
+            prod_dir = PROD_ROOT / rel
+            branch_dir = BRANCH_ROOT / rel
             if prod_dir.exists():
                 if branch_dir.exists():
                     shutil.rmtree(str(branch_dir))
@@ -674,10 +654,10 @@ async def wipe_branch():
             errors.append(f"{rel}: {e}")
 
     # 3. Data files
-    for rel in _PLATFORM_DATA_FILES:
+    for rel in PLATFORM_DATA_FILES:
         try:
-            prod_file = _PROD_ROOT / rel
-            branch_file = _BRANCH_ROOT / rel
+            prod_file = PROD_ROOT / rel
+            branch_file = BRANCH_ROOT / rel
             if prod_file.exists():
                 branch_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(prod_file), str(branch_file))
@@ -694,7 +674,7 @@ async def wipe_branch():
     try:
         subprocess.run(
             ["systemctl", "--user", "restart", "aelidirect-branch.service"],
-            check=True, timeout=10,
+            check=True, timeout=SUBPROCESS_TIMEOUT,
         )
     except Exception as e:
         errors.append(f"branch restart: {e}")
@@ -714,17 +694,17 @@ async def deploy_branch():
     hb = get_heartbeat("aelidirect_platform")
     if hb.get("running"):
         return {"ok": False, "error": "Branch is running a task — wait for completion before deploying"}
-    if not _BRANCH_ROOT.exists():
+    if not BRANCH_ROOT.exists():
         return {"ok": False, "error": "Branch directory not found"}
 
     import shutil, subprocess
     deployed = []
     errors = []
 
-    for rel in _PLATFORM_SOURCE_FILES:
+    for rel in PLATFORM_SOURCE_FILES:
         try:
-            branch_file = _BRANCH_ROOT / rel
-            prod_file = _PROD_ROOT / rel
+            branch_file = BRANCH_ROOT / rel
+            prod_file = PROD_ROOT / rel
             if branch_file.exists():
                 prod_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(branch_file), str(prod_file))
@@ -743,7 +723,7 @@ async def deploy_branch():
     try:
         subprocess.run(
             ["systemctl", "--user", "restart", "aelidirect.service"],
-            check=True, timeout=10,
+            check=True, timeout=SUBPROCESS_TIMEOUT,
         )
     except Exception as e:
         return {"ok": False, "deployed": deployed, "errors": [f"restart failed: {e}"]}
@@ -770,7 +750,7 @@ async def direct_start(request: Request):
         # Use explicit project_name if provided, else derive from message
         if raw_name:
             project_name = raw_name
-            safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', raw_name.lower())[:40]
+            safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', raw_name.lower())[:SAFE_NAME_MAX_LENGTH]
         else:
             words = re.sub(r'[^a-zA-Z0-9 ]', '', message.lower()).split()[:4]
             safe_name = "_".join(words) if words else "project"
@@ -817,12 +797,12 @@ async def direct_stream(message: str, project_dir: str):
     selected = config["selected"]
 
     # Platform self-editing: redirect to branch, auto-wipe if no testing in progress
-    if project_dir == "aelidirect_platform" and _BRANCH_ROOT.exists():
+    if project_dir == "aelidirect_platform" and BRANCH_ROOT.exists():
         import hashlib
         branch_has_newer = False
-        for rel in _PLATFORM_SOURCE_FILES:
-            prod_f = _PROD_ROOT / rel
-            branch_f = _BRANCH_ROOT / rel
+        for rel in PLATFORM_SOURCE_FILES:
+            prod_f = PROD_ROOT / rel
+            branch_f = BRANCH_ROOT / rel
             if prod_f.exists() and branch_f.exists():
                 if hashlib.md5(branch_f.read_bytes()).hexdigest() != hashlib.md5(prod_f.read_bytes()).hexdigest():
                     if branch_f.stat().st_mtime > prod_f.stat().st_mtime:
@@ -831,9 +811,9 @@ async def direct_stream(message: str, project_dir: str):
         if not branch_has_newer:
             # Auto-wipe: copy prod → branch
             import shutil
-            for rel in _PLATFORM_SOURCE_FILES:
-                prod_f = _PROD_ROOT / rel
-                branch_f = _BRANCH_ROOT / rel
+            for rel in PLATFORM_SOURCE_FILES:
+                prod_f = PROD_ROOT / rel
+                branch_f = BRANCH_ROOT / rel
                 if prod_f.exists():
                     branch_f.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(str(prod_f), str(branch_f))
@@ -841,7 +821,7 @@ async def direct_stream(message: str, project_dir: str):
             import logging
             logging.getLogger("uvicorn").info("[platform] Auto-wiped branch from prod (no testing in progress)")
         # Agent works on branch files directly
-        project_path = _BRANCH_ROOT
+        project_path = BRANCH_ROOT
 
     set_active_project(project_path)
 
@@ -858,7 +838,7 @@ async def direct_stream(message: str, project_dir: str):
         system_prompt = DIRECT_AGENT_PROMPT
 
         # Long-term memory
-        mem_dir = _DIRECT_MEMORY_DIR / project_path.name
+        mem_dir = MEMORY_DIR / project_path.name
         if mem_dir.exists():
             memories = []
             for f in sorted(mem_dir.glob("*.md")):
@@ -883,7 +863,7 @@ async def direct_stream(message: str, project_dir: str):
         _made_code_changes = False  # Track if agent wrote/edited files
         _used_any_tools = False     # Track if agent called any tools at all
         _test_fix_iteration = 0
-        _max_test_fix = 3
+        _max_test_fix = MAX_TEST_FIX_ITERATIONS
         _test_evidence = []  # Collected for TD review
         _last_response_text = ""    # Captures final agent response for TD review
 
@@ -953,13 +933,13 @@ async def direct_stream(message: str, project_dir: str):
                                 # Prod is what we're running on — restarting it kills this conversation
                                 r = _sp.run(
                                     ["systemctl", "--user", "restart", "aelidirect-branch"],
-                                    capture_output=True, text=True, timeout=10,
+                                    capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
                                 )
                                 if r.returncode == 0:
                                     import time as _time
                                     _time.sleep(2)
                                     # Verify branch came up
-                                    _check = http_get(10101, "/")
+                                    _check = http_get(BRANCH_PORT, "/")
                                     if _check.startswith("HTTP 200"):
                                         result = "Branch restarted on port 10101 and healthy. Test your changes there, then use TO PROD button when ready."
                                     else:
@@ -975,10 +955,10 @@ async def direct_stream(message: str, project_dir: str):
                             import subprocess as _sp
                             cmd = args.get("command", "")
                             try:
-                                r = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=60, cwd=str(project_path))
+                                r = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_LONG, cwd=str(project_path))
                                 result = f"exit code: {r.returncode}\n"
-                                if r.stdout: result += f"stdout:\n{r.stdout[:3000]}\n"
-                                if r.stderr: result += f"stderr:\n{r.stderr[:1000]}"
+                                if r.stdout: result += f"stdout:\n{r.stdout[:TRUNCATE_STDOUT]}\n"
+                                if r.stderr: result += f"stderr:\n{r.stderr[:TRUNCATE_STDERR]}"
                                 if not r.stdout and not r.stderr: result += "(no output)"
                             except _sp.TimeoutExpired:
                                 result = "Command timed out (60s limit)"
@@ -998,7 +978,7 @@ async def direct_stream(message: str, project_dir: str):
                         elif name == "git_diff":
                             import subprocess as _sp
                             r = _sp.run(["git", "diff"], cwd=str(project_path), capture_output=True, text=True, timeout=10)
-                            result = r.stdout[:5000] or "(no changes)"
+                            result = r.stdout[:TRUNCATE_GIT_DIFF] or "(no changes)"
                         elif name == "git_log":
                             import subprocess as _sp
                             n = int(args.get("n", 5))
@@ -1009,7 +989,7 @@ async def direct_stream(message: str, project_dir: str):
                             _commit_msg = args.get("message", "Update")
                             _sp.run(["git", "add", "."], cwd=str(project_path), capture_output=True)
                             r = _sp.run(["git", "commit", "-m", _commit_msg],
-                                       cwd=str(project_path), capture_output=True, text=True, timeout=10,
+                                       cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
                                        env={**__import__('os').environ, "GIT_AUTHOR_NAME": "aelidirect",
                                             "GIT_AUTHOR_EMAIL": "aelidirect@local",
                                             "GIT_COMMITTER_NAME": "aelidirect",
@@ -1018,16 +998,16 @@ async def direct_stream(message: str, project_dir: str):
                         elif name == "memory_save":
                             key = args.get("key", "").replace("/", "_").replace("..", "")
                             content = args.get("content", "")
-                            mem_dir = _DIRECT_MEMORY_DIR / project_path.name
+                            mem_dir = MEMORY_DIR / project_path.name
                             mem_dir.mkdir(exist_ok=True)
                             (mem_dir / f"{key}.md").write_text(content)
                             result = f"Saved memory: {key} ({len(content)} chars)"
                         elif name == "memory_load":
                             key = args.get("key", "").replace("/", "_").replace("..", "")
-                            mem_path = _DIRECT_MEMORY_DIR / project_path.name / f"{key}.md"
+                            mem_path = MEMORY_DIR / project_path.name / f"{key}.md"
                             result = mem_path.read_text() if mem_path.exists() else f"Memory '{key}' not found"
                         elif name == "memory_list":
-                            mem_dir = _DIRECT_MEMORY_DIR / project_path.name
+                            mem_dir = MEMORY_DIR / project_path.name
                             if mem_dir.exists():
                                 keys = [f.stem for f in sorted(mem_dir.glob("*.md"))]
                                 result = "Saved memories:\n" + "\n".join(f"  - {k}" for k in keys) if keys else "No memories saved"
@@ -1041,7 +1021,7 @@ async def direct_stream(message: str, project_dir: str):
                     except Exception as e:
                         result = f"Tool error in {name}: {e}"
 
-                    yield sse_event("tool_result", {"name": name, "result": result[:2000]})
+                    yield sse_event("tool_result", {"name": name, "result": result[:TRUNCATE_TOOL_RESULT]})
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
                     _used_any_tools = True
@@ -1060,13 +1040,13 @@ async def direct_stream(message: str, project_dir: str):
                     from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
 
                     # Restart branch so tests hit the new code
-                    if project_path.resolve() == _BRANCH_ROOT.resolve():
+                    if project_path.resolve() == BRANCH_ROOT.resolve():
                         import subprocess as _test_sp
                         yield sse_event("test_phase", {"status": "deploying_branch"})
                         try:
                             _test_sp.run(
                                 ["systemctl", "--user", "restart", "aelidirect-branch.service"],
-                                check=True, timeout=10,
+                                check=True, timeout=SUBPROCESS_TIMEOUT,
                             )
                             await asyncio.sleep(2)
                         except Exception:
@@ -1083,7 +1063,7 @@ async def direct_stream(message: str, project_dir: str):
                         f"Test iteration: {_test_fix_iteration}"
                     )
                     source_batch = await asyncio.to_thread(load_source_batch, "platform")
-                    _test_port = 10101 if project_path.resolve() == _BRANCH_ROOT.resolve() else 10100
+                    _test_port = BRANCH_PORT if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_PORT
                     plan = await plan_tests(
                         scope=msg, context=_test_context,
                         source_batch=source_batch, target_port=_test_port,
@@ -1165,7 +1145,7 @@ async def direct_stream(message: str, project_dir: str):
                                 result = execute_tool(name, args, project_dir=project_path)
                             except Exception as e:
                                 result = f"Tool error in {name}: {e}"
-                            yield sse_event("tool_result", {"name": name, "result": result[:2000]})
+                            yield sse_event("tool_result", {"name": name, "result": result[:TRUNCATE_TOOL_RESULT]})
                             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
                             _used_any_tools = True
 
@@ -1212,7 +1192,7 @@ async def direct_stream(message: str, project_dir: str):
                                     for _det in _d.get("details", []):
                                         if _det.get("assertion_failed"):
                                             _review_input += f"    FAIL: {_det['assertion_failed'][:200]}\n"
-                        _review_input = _review_input[:12000]
+                        _review_input = _review_input[:TRUNCATE_TD_INPUT]
 
                     _review_raw = await asyncio.to_thread(
                         call_llm, selected, prov["api_key"], prov["base_url"],
@@ -1244,7 +1224,7 @@ async def direct_stream(message: str, project_dir: str):
                 loop.create_task(_regenerate_docs())
                 # Restart branch if code changed but tests didn't run (no test phase triggered)
                 # If test phase ran, it already restarted the branch before testing.
-                if (project_path.resolve() == _BRANCH_ROOT.resolve()
+                if (project_path.resolve() == BRANCH_ROOT.resolve()
                         and _made_code_changes and _test_fix_iteration == 0):
                     import subprocess
                     try:
@@ -1404,7 +1384,7 @@ async def api_run_heartbeat_now(project_dir: str):
 
 @app.get("/api/direct/history/{project_dir}")
 async def get_direct_history(project_dir: str):
-    conv_dir = _DIRECT_CONVERSATIONS_DIR / project_dir
+    conv_dir = CONVERSATIONS_DIR / project_dir
     if not conv_dir.exists():
         return {"conversations": []}
     conv_files = sorted(conv_dir.glob("*.json"), key=lambda p: p.name)
@@ -1441,7 +1421,7 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
 
     todo_id = todo_item["id"]
     task = todo_item["task"]
-    base_url = "http://127.0.0.1:10100"
+    base_url = f"http://127.0.0.1:{PROD_PORT}"
 
     _heartbeat_progress.update({
         "active": True, "project": project_dir,
@@ -1456,7 +1436,7 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
     total_steps = 0
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(LLM_STREAM_TIMEOUT)) as client:
             # Step 1: POST /api/direct/start (same as browser sendMessage)
             start_resp = await client.post(f"{base_url}/api/direct/start", json={
                 "message": task,
@@ -1754,13 +1734,13 @@ async def _regenerate_docs():
 
     # Read all source files in parallel
     source_files = [
-        _PROD_ROOT / "backend/main.py",
-        _PROD_ROOT / "backend/tools.py",
-        _PROD_ROOT / "backend/direct_todo.py",
-        _PROD_ROOT / "backend/llm_client.py",
-        _PROD_ROOT / "backend/pod.py",
-        _PROD_ROOT / "backend/test_agent.py",
-        _PROD_ROOT / "frontend/index.html",
+        PROD_ROOT / "backend/main.py",
+        PROD_ROOT / "backend/tools.py",
+        PROD_ROOT / "backend/direct_todo.py",
+        PROD_ROOT / "backend/llm_client.py",
+        PROD_ROOT / "backend/pod.py",
+        PROD_ROOT / "backend/test_agent.py",
+        PROD_ROOT / "frontend/index.html",
     ]
 
     import concurrent.futures
@@ -1770,7 +1750,7 @@ async def _regenerate_docs():
             # Truncate large files to keep within LLM context
             if len(content) > 30000:
                 content = content[:15000] + "\n\n... [TRUNCATED] ...\n\n" + content[-15000:]
-            return f"\n### {p.relative_to(_PROD_ROOT)}\n```\n{content}\n```\n"
+            return f"\n### {p.relative_to(PROD_ROOT)}\n```\n{content}\n```\n"
         return ""
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -1792,7 +1772,7 @@ async def _regenerate_docs():
                 None, 0.3,
             )
             parsed = extract_response(result)
-            (_PROD_ROOT / "CONTEXT_MAP.md").write_text(parsed["content"])
+            (PROD_ROOT / "CONTEXT_MAP.md").write_text(parsed["content"])
             _log.info("[docs] CONTEXT_MAP.md regenerated")
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate CONTEXT_MAP.md: {e}")
@@ -1808,7 +1788,7 @@ async def _regenerate_docs():
                 None, 0.3,
             )
             parsed = extract_response(result)
-            (_PROD_ROOT / "DATA_FLOW.md").write_text(parsed["content"])
+            (PROD_ROOT / "DATA_FLOW.md").write_text(parsed["content"])
             _log.info("[docs] DATA_FLOW.md regenerated")
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate DATA_FLOW.md: {e}")
@@ -1824,7 +1804,7 @@ async def _regenerate_docs():
                 None, 0.3,
             )
             parsed = extract_response(result)
-            (_PROD_ROOT / "SPEC.md").write_text(parsed["content"])
+            (PROD_ROOT / "SPEC.md").write_text(parsed["content"])
             _log.info("[docs] SPEC.md regenerated")
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate SPEC.md: {e}")
@@ -1835,8 +1815,7 @@ async def _regenerate_docs():
 
 
 # ── TD Analysis ───────────────────────────────────────────────────────
-_TD_REPORTS_DIR = Path(__file__).parent / ".td_reports"
-_TD_REPORTS_DIR.mkdir(exist_ok=True)
+# TD_REPORTS_DIR imported from constants
 
 TD_ANALYSIS_PROMPT = (
     "You are a Technical Director reviewing an AI agent's work across multiple conversations and projects.\n\n"
@@ -1870,8 +1849,8 @@ async def run_td_analysis():
     parts = []
     total_convs = 0
 
-    if _DIRECT_CONVERSATIONS_DIR.exists():
-        for proj_dir in sorted(_DIRECT_CONVERSATIONS_DIR.iterdir()):
+    if CONVERSATIONS_DIR.exists():
+        for proj_dir in sorted(CONVERSATIONS_DIR.iterdir()):
             if not proj_dir.is_dir():
                 continue
             conv_files = sorted(proj_dir.glob("*.json"), key=lambda p: p.name)
@@ -1880,7 +1859,7 @@ async def run_td_analysis():
 
             parts.append(f"\n## Project: {proj_dir.name} ({len(conv_files)} conversations)\n")
 
-            for f in conv_files[-30:]:  # last 30 per project
+            for f in conv_files[-TD_ANALYSIS_RECENT_COUNT:]:
                 try:
                     conv = json.loads(f.read_text())
                     total_convs += 1
@@ -1904,7 +1883,7 @@ async def run_td_analysis():
 
     # Truncate if too large for the LLM
     if len(context) > 400_000:
-        context = context[:400_000] + "\n\n... (truncated)"
+        context = context[:TRUNCATE_TD_CONTEXT] + "\n\n... (truncated)"
 
     try:
         selected = config["selected"]
@@ -1922,7 +1901,7 @@ async def run_td_analysis():
         # Save report
         from datetime import datetime, timezone
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-        (_TD_REPORTS_DIR / f"{ts}.md").write_text(report)
+        (TD_REPORTS_DIR / f"{ts}.md").write_text(report)
 
         return {"report": report, "timestamp": ts, "conversations_analyzed": total_convs}
     except Exception as e:
@@ -1932,9 +1911,9 @@ async def run_td_analysis():
 @app.get("/api/td-analysis")
 async def get_latest_td_analysis():
     """Get the most recent TD analysis report."""
-    if not _TD_REPORTS_DIR.exists():
+    if not TD_REPORTS_DIR.exists():
         return {"report": None}
-    files = sorted(_TD_REPORTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(TD_REPORTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         return {"report": None}
     return {"report": files[0].read_text(), "timestamp": files[0].stem}
@@ -1944,8 +1923,8 @@ async def get_latest_td_analysis():
 async def list_td_reports():
     """List all TD analysis reports."""
     reports = []
-    if _TD_REPORTS_DIR.exists():
-        for f in sorted(_TD_REPORTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+    if TD_REPORTS_DIR.exists():
+        for f in sorted(TD_REPORTS_DIR.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
             content = f.read_text()
             reports.append({"timestamp": f.stem, "preview": content[:300].replace("\n", " ")})
     return {"reports": reports}
@@ -1954,7 +1933,7 @@ async def list_td_reports():
 @app.get("/api/td-reports/{timestamp}")
 async def get_td_report(timestamp: str):
     """Get a specific TD report by timestamp."""
-    report_path = _TD_REPORTS_DIR / f"{timestamp}.md"
+    report_path = TD_REPORTS_DIR / f"{timestamp}.md"
     if report_path.exists():
         return {"report": report_path.read_text(), "timestamp": timestamp}
     return {"report": None, "timestamp": timestamp}
@@ -1971,4 +1950,4 @@ async def serve_index():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10100)
+    uvicorn.run(app, host="0.0.0.0", port=PROD_PORT)

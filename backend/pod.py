@@ -21,11 +21,16 @@ import json
 import urllib.request
 import urllib.error
 from pathlib import Path
+from constants import (
+    POD_PORT_RANGE, CONTAINER_INTERNAL_PORT, CONTAINER_BASE_IMAGE,
+    SAFE_NAME_MAX_LENGTH, SUBPROCESS_TIMEOUT, HEALTH_CHECK_TIMEOUT,
+    HEALTH_CHECK_RETRIES, HEALTH_CHECK_DELAY,
+)
 
 # ── Port allocation ──────────────────────────────────────────────────
-PORT_RANGE = range(11001, 11099)
+PORT_RANGE = POD_PORT_RANGE
 PORT_FILE = Path(__file__).parent / ".ports.json"
-INTERNAL_PORT = 8000  # All containers listen on 8000 internally
+INTERNAL_PORT = CONTAINER_INTERNAL_PORT
 
 
 def _load_ports() -> dict:
@@ -54,7 +59,7 @@ def _is_port_free(port: int) -> bool:
 
 def _safe_pod_name(project_name: str) -> str:
     """Convert project name to a safe podman pod name."""
-    safe = re.sub(r'[^a-zA-Z0-9_-]', '_', project_name.lower())[:40]
+    safe = re.sub(r'[^a-zA-Z0-9_-]', '_', project_name.lower())[:SAFE_NAME_MAX_LENGTH]
     return f"aelimini-{safe}" if safe else "aelimini-project"
 
 
@@ -133,7 +138,7 @@ def generate_containerfile(project_dir: Path, app_type: str, port: int = INTERNA
                 break
         req_install_base = "RUN pip install --no-cache-dir fastapi uvicorn\n"
         return (
-            f"FROM python:3.13-slim\n"
+            f"FROM {CONTAINER_BASE_IMAGE}\n"
             f"WORKDIR /app\n"
             f"COPY . /app/\n"
             f"{req_install_base}"
@@ -150,7 +155,7 @@ def generate_containerfile(project_dir: Path, app_type: str, port: int = INTERNA
                 break
         req_install_base = "RUN pip install --no-cache-dir flask\n"
         return (
-            f"FROM python:3.13-slim\n"
+            f"FROM {CONTAINER_BASE_IMAGE}\n"
             f"WORKDIR /app\n"
             f"COPY . /app/\n"
             f"{req_install_base}"
@@ -161,7 +166,7 @@ def generate_containerfile(project_dir: Path, app_type: str, port: int = INTERNA
 
     elif app_type == "static":
         return (
-            f"FROM python:3.13-slim\n"
+            f"FROM {CONTAINER_BASE_IMAGE}\n"
             f"WORKDIR /app\n"
             f"COPY . /app/\n"
             f"EXPOSE {port}\n"
@@ -170,7 +175,7 @@ def generate_containerfile(project_dir: Path, app_type: str, port: int = INTERNA
 
     else:
         return (
-            f"FROM python:3.13-slim\n"
+            f"FROM {CONTAINER_BASE_IMAGE}\n"
             f"WORKDIR /app\n"
             f"COPY . /app/\n"
             f"{req_install}"
@@ -339,7 +344,7 @@ def spin_up_pod(
 
     # ── 4. HEALTH CHECK ──
     result["phase"] = "health"
-    ok, msg = health_check(host_port, "/health", retries=15, delay=2.0)
+    ok, msg = health_check(host_port, "/health", retries=HEALTH_CHECK_RETRIES, delay=HEALTH_CHECK_DELAY)
     if ok:
         result["success"] = True
         result["message"] = msg

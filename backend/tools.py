@@ -11,12 +11,16 @@ and YOUR code executes it and sends the result back.
 
 import os
 from pathlib import Path
+from constants import (
+    PROJECTS_ROOT, BRANCH_ROOT, PLATFORM_PROJECT_NAME, PROD_ROOT,
+    READ_PROJECT_BUDGET, READ_FILE_TRUNCATE, FILE_TAIL_LINES,
+    CODE_EXTENSIONS, SKIP_DIRS, SAFE_NAME_MAX_LENGTH,
+)
 
 # ─── Project directories ────────────────────────────────────────────
-PROJECTS_ROOT = Path(__file__).parent.parent / "projects"
-PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+# PROJECTS_ROOT imported from constants
 _SAFE_ROOTS = [
-    Path(__file__).parent.parent.resolve(),  # aelidirect/
+    PROD_ROOT.resolve(),  # aelidirect/
 ]
 
 _active_project_dir = {"path": None}
@@ -30,8 +34,7 @@ _file_cache_main = {}      # (resolved_project, rel_path) -> content
 _file_cache_branch = {}    # same key format, for branch edits
 _file_cache_mtime = {}     # tracks disk mtime for cache invalidation
 
-_BRANCH_ROOT = Path("/home/aeli/projects/aelidirect_branch")
-_PLATFORM_PROJECT_NAME = "aelidirect_platform"
+# BRANCH_ROOT and PLATFORM_PROJECT_NAME imported from constants
 
 
 def _cache_key(project: Path, path: str) -> tuple:
@@ -40,7 +43,7 @@ def _cache_key(project: Path, path: str) -> tuple:
 
 def _is_platform_project(project: Path) -> bool:
     """Check if this project dir is the platform self-editing project."""
-    return project.name == _PLATFORM_PROJECT_NAME or project.resolve() == _BRANCH_ROOT.resolve()
+    return project.name == PLATFORM_PROJECT_NAME or project.resolve() == BRANCH_ROOT.resolve()
 
 
 def file_cache_get(project: Path, path: str) -> str | None:
@@ -190,19 +193,7 @@ def rename_project(project_dir: Path, new_name: str):
 # The LLM reads these to know what tools are available.
 # ═══════════════════════════════════════════════════════════════════════
 
-# Max chars for read_project output (~25k tokens at 4 chars/token)
-READ_PROJECT_BUDGET = 100_000
-# File extensions to include in read_project
-_CODE_EXTENSIONS = {
-    ".py", ".html", ".htm", ".js", ".ts", ".css", ".yaml", ".yml",
-    ".json", ".toml", ".cfg", ".ini", ".sh", ".sql", ".md", ".txt",
-    ".jsx", ".tsx", ".vue", ".svelte", ".go", ".rs", ".java",
-}
-# Directories to always skip
-_SKIP_DIRS = {
-    "venv", "node_modules", "__pycache__", ".git", ".td_reports",
-    ".td_cross_reports", "dist", "build", ".next",
-}
+# READ_PROJECT_BUDGET, CODE_EXTENSIONS, SKIP_DIRS imported from constants
 
 
 TOOL_DEFINITIONS = [
@@ -467,13 +458,13 @@ def _tool_read_file(project: Path, path: str) -> str:
         file_cache_set(project, path, content)
         _file_cache_mtime[cache_key] = disk_mtime
 
-    if len(content) > 16000:
+    if len(content) > READ_FILE_TRUNCATE:
         lines = content.splitlines()
         total_lines = len(lines)
-        last_lines = "\n".join(lines[-20:])
+        last_lines = "\n".join(lines[-FILE_TAIL_LINES:])
         content = (
-            content[:16000] +
-            f"\n\n... TRUNCATED (showing first 16000 of {len(content)} chars, {total_lines} total lines)\n"
+            content[:READ_FILE_TRUNCATE] +
+            f"\n\n... TRUNCATED (showing first {READ_FILE_TRUNCATE} of {len(content)} chars, {total_lines} total lines)\n"
             f"Use read_file_tail to see the end of this file.\n\n"
             f"=== LAST 20 LINES ===\n{last_lines}"
         )
@@ -669,10 +660,10 @@ def _tool_read_project(project: Path) -> str:
             continue
         # Skip hidden files and excluded directories
         parts = f.relative_to(project).parts
-        if any(p.startswith(".") or p in _SKIP_DIRS for p in parts):
+        if any(p.startswith(".") or p in SKIP_DIRS for p in parts):
             continue
         # Skip non-code files
-        if f.suffix.lower() not in _CODE_EXTENSIONS:
+        if f.suffix.lower() not in CODE_EXTENSIONS:
             continue
         try:
             size = f.stat().st_size

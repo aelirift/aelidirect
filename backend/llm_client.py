@@ -7,11 +7,12 @@ import httpx
 import json
 import time
 from typing import Optional
+from constants import LLM_TIMEOUT, LLM_RETRYABLE_CODES, LLM_MAX_RETRIES, LLM_RETRY_DELAY, LLM_MAX_TOKENS
 
-TIMEOUT = 180.0
-RETRYABLE_CODES = {429, 502, 503, 504}
-MAX_RETRIES = 3
-RETRY_DELAY = 3.0
+TIMEOUT = LLM_TIMEOUT
+RETRYABLE_CODES = LLM_RETRYABLE_CODES
+MAX_RETRIES = LLM_MAX_RETRIES
+RETRY_DELAY = LLM_RETRY_DELAY
 
 
 class LLMError(Exception):
@@ -47,7 +48,7 @@ def call_llm(
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": 16000,
+        "max_tokens": LLM_MAX_TOKENS,
     }
 
     # THIS IS THE KEY DIFFERENCE:

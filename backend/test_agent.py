@@ -18,12 +18,15 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 
-# ── Config ──────────────────────────────────────────────────────────
-DEFAULT_PORT = 10101  # Test against branch by default
+# ── Config (from constants.py) ──────────────────────────────────────
+from constants import (
+    BRANCH_PORT, PROD_PORT, PROJECTS_ROOT, BACKEND_DIR,
+    MAX_TEST_FIX_ITERATIONS, CODE_EXTENSIONS, SKIP_DIRS,
+    PLATFORM_SOURCE_FILES, TRUNCATE_TODO_RESULT,
+)
+DEFAULT_PORT = BRANCH_PORT
 BASE_URL = f"http://127.0.0.1:{DEFAULT_PORT}"
-BACKEND_DIR = Path(__file__).parent
-PROJECTS_ROOT = BACKEND_DIR.parent / "projects"
-MAX_FIX_ITERATIONS = 3
+MAX_FIX_ITERATIONS = MAX_TEST_FIX_ITERATIONS
 
 # Files that make up the platform source
 PLATFORM_FILES = [
@@ -83,8 +86,8 @@ def _discover_project_files(project_name: str) -> list[str]:
     project_dir = PROJECTS_ROOT / project_name
     if not project_dir.exists():
         return []
-    code_ext = {".py", ".html", ".js", ".ts", ".css", ".json", ".yaml", ".yml", ".md"}
-    skip_dirs = {"venv", "node_modules", "__pycache__", ".git", "dist", "build"}
+    code_ext = CODE_EXTENSIONS
+    skip_dirs = SKIP_DIRS
     files = []
     for f in sorted(project_dir.rglob("*")):
         if not f.is_file():

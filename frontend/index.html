@@ -1074,6 +1074,7 @@ button { cursor: pointer; font-family: inherit; }
             <span class="proj-dir" id="project-bar-dir"></span>
             <button class="ctx-map-btn" onclick="showSpec(state.projectDir)">Spec</button>
             <button class="ctx-map-btn" onclick="showContextMap(state.projectDir)">Context Map</button>
+            <button class="ctx-map-btn" onclick="eraseHistory()" style="color:#ff5555;border-color:#ff555544;">Erase History</button>
             <span class="turn-counter" id="turn-counter"></span>
           </div>
           <div class="messages" id="messages">
@@ -1532,6 +1533,21 @@ async function loadHistory(dirName) {
   }
 }
 
+async function eraseHistory() {
+  if (!state.projectDir) return;
+  if (!confirm('Erase all conversation history for ' + state.projectDir + '? This cannot be undone.')) return;
+  try {
+    const resp = await fetch('/api/direct/history/' + encodeURIComponent(state.projectDir), {method: 'DELETE'});
+    const data = await resp.json();
+    if (data.ok) {
+      document.getElementById('messages').innerHTML =
+        '<div style="color:#5fe88a; padding:12px;">History erased (' + data.deleted + ' conversations). Fresh start.</div>';
+    }
+  } catch (e) {
+    alert('Failed to erase history: ' + e.message);
+  }
+}
+
 // =================================================================
 // CHAT MESSAGES
 // =================================================================
@@ -1652,8 +1668,8 @@ async function sendMessage() {
 
     evtSource.addEventListener('phase', function(e) {
       const d = JSON.parse(e.data);
-      const labels = {coding: 'Coding', testing: 'Testing', post_test: 'Post-Test'};
-      const colors = {coding: '#26a1ff', testing: '#00e5ff', post_test: '#b388ff'};
+      const labels = {planning: 'Planning', coding: 'Coding', testing: 'Testing', post_test: 'Post-Test'};
+      const colors = {planning: '#ffa500', coding: '#26a1ff', testing: '#00e5ff', post_test: '#b388ff'};
       const label = labels[d.phase] || d.phase;
       const color = colors[d.phase] || '#888';
       addMsg('system',

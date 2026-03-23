@@ -152,6 +152,19 @@ def _summarize_old_conversations(conversations: list, prov: dict, selected: str)
 
 # ── Route ──────────────────────────────────────────────────────────────
 
+@router.delete("/api/direct/history/{project_dir}")
+async def erase_history(project_dir: str):
+    """Erase all conversation history for a project."""
+    conv_dir = CONVERSATIONS_DIR / project_dir
+    if not conv_dir.exists():
+        return {"ok": True, "deleted": 0}
+    count = 0
+    for f in conv_dir.glob("*.json"):
+        f.unlink()
+        count += 1
+    return {"ok": True, "deleted": count}
+
+
 @router.get("/api/direct/history/{project_dir}")
 async def get_direct_history(project_dir: str):
     conv_dir = CONVERSATIONS_DIR / project_dir

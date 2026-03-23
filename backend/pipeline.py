@@ -184,6 +184,22 @@ async def direct_stream(message: str, project_dir: str):
         _phase = "coding"           # Current phase: coding, testing, post_test
 
         try:
+            # ── PLANNING TURN (no tools — forces text plan) ──
+            yield sse_event("phase", {"phase": "planning"})
+            total_turns += 1
+            yield sse_event("turn", {"turn": total_turns, "action_turns": 0, "max": max_turns})
+            _plan_raw = await asyncio.to_thread(
+                call_llm, selected, prov["api_key"], prov["base_url"],
+                prov["model"], messages, None, 0.3,  # No tools — must respond with text
+            )
+            _plan_parsed = extract_response(_plan_raw)
+            _plan_text = _plan_parsed.get("content", "")
+            if _plan_text:
+                yield sse_event("thinking", {"content": _plan_text.strip()})
+                messages.append({"role": "assistant", "content": _plan_text})
+                messages.append({"role": "user", "content": "Good plan. Execute it now."})
+
+            # ── CODING (tools enabled) ──
             yield sse_event("phase", {"phase": "coding"})
             while action_turns < max_turns:
                 total_turns += 1

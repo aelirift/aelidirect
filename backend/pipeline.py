@@ -31,7 +31,7 @@ from history import _save_conversation, _load_conversation_history
 from docs import _regenerate_docs
 
 import logging
-_log = logging.getLogger("pipeline")
+_log = logging.getLogger("uvicorn")
 
 router = APIRouter()
 
@@ -818,11 +818,30 @@ async def direct_stream(message: str, project_dir: str):
             if _used_any_tools:
                 try:
                     yield sse_event("td_review", {"status": "running"})
-                    # Build full arc summary for TD: original task → plan → what was coded → test results
+                    # Build full arc summary for TD: task → plan → changes → response → tests
                     _review_input = f"## Original Task\n{msg}\n\n"
                     if _plan_text:
                         _review_input += f"## Agent Plan\n{_plan_text[:2000]}\n\n"
-                    _review_input += f"## Agent Final Response\n{_final_response[:4000]}\n\n"
+
+                    # Summarize what the agent actually changed (extract from messages)
+                    _changes = []
+                    for _rm in messages:
+                        if _rm.get("role") == "tool":
+                            _rc = _rm.get("content", "")
+                            if _rc.startswith("Patched "):
+                                _changes.append(_rc[:200])
+                            elif _rc.startswith("File written"):
+                                _changes.append(_rc[:200])
+                            elif "ERROR" in _rc[:20] or "Error" in _rc[:20]:
+                                _changes.append(f"ERROR: {_rc[:200]}")
+                    if _changes:
+                        _review_input += "## Code Changes Made\n"
+                        for _c in _changes:
+                            _review_input += f"- {_c}\n"
+                        _review_input += "\n"
+
+                    if _final_response:
+                        _review_input += f"## Agent Final Response\n{_final_response[:2000]}\n\n"
                     _review_input += f"## Test Fix Iterations: {_test_fix_iteration}\n"
                     if _test_evidence:
                         _review_input += "\n\n## Automated Test Results\n"

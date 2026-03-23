@@ -30,6 +30,9 @@ from pod import spin_up_pod, http_get, get_available_port
 from history import _save_conversation, _load_conversation_history
 from docs import _regenerate_docs
 
+import logging
+_log = logging.getLogger("pipeline")
+
 router = APIRouter()
 
 
@@ -322,6 +325,7 @@ async def direct_stream(message: str, project_dir: str):
         _phase = "coding"           # Current phase: coding, testing, post_test
 
         try:
+            _log.info(f"[pipeline] START project={project_dir} msg={msg[:80]}")
             # ── PLANNING TURN (no tools — forces text plan) ──
             yield sse_event("phase", {"phase": "planning"})
             total_turns += 1
@@ -492,6 +496,7 @@ async def direct_stream(message: str, project_dir: str):
                         else:
                             result = execute_tool(name, args, project_dir=project_path)
                     except Exception as e:
+                        _log.error(f"[pipeline] TOOL ERROR name={name} error={e}")
                         result = f"Tool error in {name}: {e}"
 
                     yield sse_event("tool_result", {"name": name, "result": result[:TRUNCATE_TOOL_RESULT]})
@@ -506,9 +511,15 @@ async def direct_stream(message: str, project_dir: str):
                     action_turns += 1
 
             # ── TEST PHASE (runs after agent loop, regardless of how it ended) ──
+            _msg_chars = sum(len(json.dumps(m)) for m in messages)
+            _log.info(f"[pipeline] AGENT LOOP DONE turns={total_turns} action={action_turns} "
+                      f"code_changes={_made_code_changes} tools_used={_used_any_tools} "
+                      f"msgs={len(messages)} chars={_msg_chars}")
             # Plan tests ONCE. Re-run same plan on retries (don't re-plan).
             # On failure, include original task + failures → re-enter main agent loop.
             _test_plan = None  # Planned once, reused on retries
+            if _made_code_changes:
+                _log.info(f"[pipeline] TEST PHASE starting (max {_max_test_fix} iterations)")
             while (_made_code_changes and _test_fix_iteration < _max_test_fix):
                 try:
                     from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
@@ -782,14 +793,16 @@ async def direct_stream(message: str, project_dir: str):
                     continue
 
                 except Exception as _te:
-                    import logging as _tlog
-                    _tlog.getLogger("uvicorn").error(f"[test-phase] Error: {_te}")
+                    import traceback as _tb
+                    _log.error(f"[pipeline] TEST PHASE ERROR iter={_test_fix_iteration} "
+                               f"last_tool={messages[-1].get('role', '?')} error={_te}\n{_tb.format_exc()}")
                     yield sse_event("test_phase", {"status": "error", "error": str(_te)[:200]})
                     break
             # ── END TEST PHASE ──────────────────────────────────
 
             # ── POST-TEST PHASE ──────────────────────────────────
             _phase = "post_test"
+            _log.info(f"[pipeline] POST-TEST test_iterations={_test_fix_iteration} evidence={len(_test_evidence)}")
             yield sse_event("phase", {"phase": "post_test"})
 
             # Extract final response text for TD review
@@ -842,10 +855,12 @@ async def direct_stream(message: str, project_dir: str):
                         "review": _td_review_text,
                     })
                 except Exception as _tde:
-                    import logging as _tdlog
-                    _tdlog.getLogger("uvicorn").error(f"[td-review] Pipeline error: {_tde}")
+                    import traceback as _tdb
+                    _log.error(f"[pipeline] TD REVIEW ERROR error={_tde}\n{_tdb.format_exc()}")
                     yield sse_event("td_review", {"status": "error", "error": str(_tde)[:200]})
 
+            _log.info(f"[pipeline] DONE turns={total_turns} action={action_turns} "
+                      f"test_iters={_test_fix_iteration} td={'yes' if _td_review_text else 'no'}")
             yield sse_event("done", {
                 "turns": total_turns,
                 "action_turns": action_turns,
@@ -872,6 +887,8 @@ async def direct_stream(message: str, project_dir: str):
 
         except Exception as e:
             import traceback
+            _log.error(f"[pipeline] FATAL phase={_phase} turns={total_turns} action={action_turns} "
+                       f"msgs={len(messages)} error={e}\n{traceback.format_exc()}")
             yield sse_event("error", {"message": str(e), "traceback": traceback.format_exc()})
             try:
                 _save_conversation(project_dir, msg, messages)

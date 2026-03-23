@@ -875,7 +875,7 @@ async def direct_stream(message: str, project_dir: str):
             {"role": "user", "content": msg},
         ]
         action_turns = 0
-        max_turns = 80
+        max_turns = 150
         total_turns = 0
         _made_code_changes = False  # Track if agent wrote/edited files
         _used_any_tools = False     # Track if agent called any tools at all
@@ -1443,7 +1443,7 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
     _heartbeat_progress.update({
         "active": True, "project": project_dir,
         "todo_id": todo_id, "task": task[:100],
-        "step": "starting", "turn": 0, "max_turns": 80, "total_steps": 0,
+        "step": "starting", "turn": 0, "max_turns": 150, "total_steps": 0,
         "started_at": datetime.now(timezone.utc).isoformat()[:19],
         "finished_at": "", "result_status": "", "result_message": "",
     })
@@ -1492,7 +1492,7 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
                         if event_type == "turn":
                             _heartbeat_progress.update({
                                 "turn": d.get("action_turns", 0),
-                                "max_turns": d.get("max", 80),
+                                "max_turns": d.get("max", 150),
                             })
                         elif event_type == "tool_call":
                             total_steps += 1

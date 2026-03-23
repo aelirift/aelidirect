@@ -1652,22 +1652,33 @@ async function sendMessage() {
 
     evtSource.addEventListener('test_phase', function(e) {
       const d = JSON.parse(e.data);
+      const tag = '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ';
       if (d.status === 'deploying_branch') {
-        showSpinner('Restarting branch for testing...');
-        addMsg('system', '<span style="color:#ffa500;">Restarting branch server before testing...</span>', true);
+        showSpinner('Test Agent: restarting branch...');
+        addMsg('system',
+          '<div style="border-left:3px solid #00e5ff; padding:6px 12px; margin:4px 0; background:#0a1a2a;">' +
+          tag + 'Restarting branch server before testing...</div>', true);
       } else if (d.status === 'planning') {
-        showSpinner('Test agent planning (iter ' + d.iteration + ')...');
-        addMsg('system', '<span style="color:#ffa500;">Test agent: planning tests (iteration ' + d.iteration + ')</span>', true);
+        showSpinner('Test Agent: planning (iter ' + d.iteration + ')...');
+        addMsg('system',
+          '<div style="border-left:3px solid #00e5ff; padding:6px 12px; margin:4px 0; background:#0a1a2a;">' +
+          tag + 'Planning tests (iteration ' + d.iteration + ')</div>', true);
       } else if (d.status === 'running') {
-        showSpinner('Running ' + d.test_count + ' tests...');
-        addMsg('system', '<span style="color:#ffa500;">Test agent: running ' + d.test_count + ' tests (iteration ' + d.iteration + ')</span>', true);
+        showSpinner('Test Agent: running ' + d.test_count + ' tests...');
+        addMsg('system',
+          '<div style="border-left:3px solid #00e5ff; padding:6px 12px; margin:4px 0; background:#0a1a2a;">' +
+          tag + 'Running ' + d.test_count + ' tests (iteration ' + d.iteration + ')</div>', true);
       } else if (d.status === 'all_passed') {
         addMsg('system',
           '<div style="border:1px solid #5fe88a; border-radius:8px; padding:10px; margin:4px 0; background:#0a2a1a;">' +
-          '<span style="color:#5fe88a; font-weight:bold;">All ' + d.passed + ' tests passed</span>' +
+          '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ' +
+          '<span style="color:#5fe88a; font-weight:bold;"> All ' + d.passed + ' tests passed</span>' +
           '</div>', true);
       } else if (d.status === 'error') {
-        addMsg('system', '<span style="color:#ff5555;">Test error: ' + escHtml(d.error || '') + '</span>', true);
+        addMsg('system',
+          '<div style="border-left:3px solid #ff5555; padding:6px 12px; margin:4px 0; background:#2a0a0a;">' +
+          '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ' +
+          '<span style="color:#ff5555;"> Error: ' + escHtml(d.error || '') + '</span></div>', true);
       }
     });
 
@@ -1675,24 +1686,28 @@ async function sendMessage() {
       const d = JSON.parse(e.data);
       addMsg('system',
         '<div style="border:1px solid #ff5555; border-radius:8px; padding:10px; margin:4px 0; background:#2a0a0a;">' +
-        '<span style="color:#ff5555; font-weight:bold;">' + d.failed + ' tests failed</span> (' + d.passed + ' passed) &mdash; ' +
-        'feeding failures back to agent (iteration ' + d.iteration + ')' +
+        '<span style="color:#00e5ff; font-weight:bold;">Test Agent:</span> ' +
+        '<span style="color:#ff5555; font-weight:bold;"> ' + d.failed + ' tests failed</span> (' + d.passed + ' passed) &mdash; ' +
+        'feeding failures back to coder (iteration ' + d.iteration + ')' +
         '</div>', true);
-      showSpinner('Agent fixing test failures (iter ' + d.iteration + ')...');
+      showSpinner('Test Agent: feeding failures to coder (iter ' + d.iteration + ')...');
     });
 
     evtSource.addEventListener('td_review', function(e) {
       const d = JSON.parse(e.data);
       if (d.status === 'running') {
-        showSpinner('TD review running...');
+        showSpinner('TD Analysis running...');
       } else if (d.status === 'complete' && d.review) {
         addMsg('system',
           '<div style="border:1px solid #b388ff; border-radius:8px; padding:12px; margin:4px 0; background:#1a0a2a;">' +
-          '<div style="color:#b388ff; font-weight:bold; margin-bottom:6px;">TD Review</div>' +
+          '<div style="color:#b388ff; font-weight:bold; margin-bottom:6px;">TD Analysis</div>' +
           '<div style="white-space:pre-wrap; color:#ccc; line-height:1.5; font-size:0.9em;">' + escHtml(d.review) + '</div>' +
           '</div>', true);
       } else if (d.status === 'error') {
-        addMsg('system', '<span style="color:#ff5555;">TD review error: ' + escHtml(d.error || '') + '</span>', true);
+        addMsg('system',
+          '<div style="border-left:3px solid #ff5555; padding:6px 12px; margin:4px 0; background:#2a0a0a;">' +
+          '<span style="color:#b388ff; font-weight:bold;">TD Analysis:</span> ' +
+          '<span style="color:#ff5555;"> Error: ' + escHtml(d.error || '') + '</span></div>', true);
       }
     });
 

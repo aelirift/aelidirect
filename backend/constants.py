@@ -37,7 +37,14 @@ PLATFORM_PROJECT_NAME = "aelidirect_platform"
 
 PLATFORM_SOURCE_FILES = [
     "frontend/index.html",
-    "backend/main.py",
+    "backend/app.py",
+    "backend/state.py",
+    "backend/pipeline.py",
+    "backend/heartbeat.py",
+    "backend/platform_routes.py",
+    "backend/history.py",
+    "backend/td.py",
+    "backend/docs.py",
     "backend/tools.py",
     "backend/direct_todo.py",
     "backend/llm_client.py",

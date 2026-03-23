@@ -1,621 +1,902 @@
 <think>
-The user wants me to produce a DATA_FLOW.md document tracing the data flow through the aelidirect system based on the provided source code. Let me analyze the code carefully and trace each flow.
+The user wants me to generate a DATA_FLOW.md documentation file that traces the data flow through the aelidirect system. Let me analyze the source code provided and trace through each of the seven requested flows:
 
-Let me go through each of the 7 areas:
+1. Main chat flow (user message → SSE stream → agent loop → response)
+2. Tool call loop (LLM response → tool execution → result → next LLM call)
+3. Memory system (long-term save/load, short-term conversation history)
+4. Heartbeat/todo execution flow
+5. Deployment flow (pod management)
+6. Config and state management
+7. Branch/prod sync flow
 
-1. **Main chat flow (user message → SSE stream → agent loop → response)**
-2. **Tool call loop (LLM response → tool execution → result → next LLM call)**
-3. **Memory system (long-term save/load, short-term conversation history)**
-4. **Heartbeat/todo execution flow**
-5. **Deployment flow (pod management)**
-6. **Config and state management**
+However, I notice that the user has only provided partial files:
+- backend/tools.py - Complete
+- backend/direct_todo.py - Complete
+- backend/llm_client.py - Complete
+- backend/pod.py - Complete
+- backend/test_agent.py - Complete
+- backend/constants.py - Complete
+- frontend/index.html - Complete (but quite large and contains a lot of UI code)
+
+Missing files that would be needed for complete tracing:
+- backend/main.py - The FastAPI server (routes, SSE handling)
+- backend/state.py - State management
+- backend/pipeline.py - The agent loop/pipeline
+- backend/heartbeat.py - Heartbeat execution
+- backend/platform_routes.py - Platform-specific routes
+- backend/history.py - Conversation history
 
 
-7. **Branch/prod sync flow**
+- backend/td.py - TD (test-driven?) 
+- backend/docs.py
 
-Now I'm mapping out the key files and entry points. The main FastAPI application runs on port 10100, with the chat streaming handled through `/api/chat/stream`, the SSE event formatting utility, and the core agent loop that orchestrates the LLM interactions. The tools module contains the file caching system and dual-cache strategy for handling both main and branch platform projects.
+I can trace the flows using what I have available. The main chat flow starts with the frontend sending messages to `/api/direct/start` via `send_to_chat_pipeline`, which returns a stream URL consumed as an SSE stream. The backend main.py receives this and initiates the agent loop through pipeline.py, which calls llm_client.py with tools, handles tool calls via tools.py, and streams responses back via SSE. For the tool call loop, llm_client.py returns tool_calls in its response, which pipeline.py then executes through tools.py and feeds results back to the LLM for the next iteration.
 
-Now I'm looking at the remaining components: the direct todo and heartbeat system for scheduling and tracking tasks, the LLM client that wraps the API calls with retry logic and response parsing, and the pod management system for spinning up containers. The frontend appears to be a single-page application built with vanilla JavaScript and CSS.
+Memory flows through direct_todo.py for todos and direct_memory for persistent storage, with conversations stored in .direct_conversations. Heartbeat scheduling lives in direct_todo.py and is executed by heartbeat.py, which handles auto-execution and status recording. The deployment flow uses pod.py's spin_up_pod function to manage containers through podman. Config persists in .config.json with _agent_state in pod.py for pod-specific state. Branch and prod synchronization involves platform_routes.py for branch operations, tools.py for the dual file cache (main and branch), and the branch-wipe/deploy functionality from frontend calls to backend endpoints.
 
-Starting to trace through the main chat flow, I need to identify where the user message originates from the frontend and how it flows through the backend.
+Now I need to generate the DATA_FLOW.md file with proper references to what's actually present in the provided code. I'll trace each flow using only the files that were supplied, noting where files like main.py, state.py, pipeline.py, and heartbeat.py would fit into the architecture but aren't available in the provided snippet. The frontend reference to `/api/direct/start`, `/api/platform/branch-status`, `/api/platform/branch-wipe`, `/api/platform/branch-deploy`, and `/api/platform/heartbeat-progress` indicates what backend endpoints exist, even if I can only infer their structure from their names and how they're called. Looking at the files that are available, I can trace specific connections: the LLM client shows how tool calls are extracted and parsed, the tool execution functions in tools.py show the actual implementation of read_file, edit_file, patch_file, and others, pod.py demonstrates the spin_up_pod lifecycle and health checking, and the test agent shows how the full plan-run-fix loop operates. The frontend JavaScript shows the SSE stream consumption pattern. However, without seeing main.py, state.py, pipeline.py, and heartbeat.py directly, I'll need to reconstruct the missing pieces based on what's clearly implied by these available components and how they interact with each other. The test agent shows the full flow clearly. When a test fails, it calls `send_to_chat_pipeline` with the failure message, which posts to `/api/direct/start` and consumes the SSE stream. The chat pipeline then processes the failure, fixes the issues, and returns the result.
 
-The user submits a message through an HTML form which triggers the `sendMessage()` function, which then calls `/api/chat/stream` as a streaming request. The backend endpoint extracts the project information, conversation history, and context before invoking the `_direct_agent_loop()` function to process the message.
-
-Inside `_direct_agent_loop()`, the system first sends an initial SSE phase event, then loads any conversation history from memory and appends the user's new message to the conversation history. It constructs the system prompt and conversation messages before entering the main agent loop that processes the response.
-
-Now I'm tracing through the tool execution flow—the LLM returns either text or a tool call, and if it's a tool call, the system executes it via `execute_tool()`, appends the result back to the conversation, and loops again until the LLM produces a final text response, which gets streamed back to the client via SSE events.
-
-Then there's the memory system layered in—short-term conversation history gets loaded and saved per project, with automatic summarization when the token budget is exceeded, while long-term memory uses dedicated tools that let the agent save and retrieve information across sessions. There's also a file caching layer for the platform project itself.
-
-Now looking at the heartbeat system, it runs as a background task that periodically checks for pending todos and executes them in sequence. The heartbeat state gets persisted to disk and monitored across server restarts, and there's TD review logic that evaluates todo execution results.
-
-For the deployment flow, when the agent triggers a pod spin-up, it goes through port allocation, container image building, pod creation, and health checks before returning the result.
-
-Config and state management uses JSON files for persistent settings, while branch and production sync maintain separate file caches that get synchronized through explicit API calls.
-
-Now I'm mapping out the data flow through the platform's core endpoints and helper functions.
-
-Tracing through the frontend JavaScript to understand how messages are sent and received via the streaming API, and how the conversation state is maintained across interactions.
-
-Now I'm examining the file caching system that sits between the agent and the filesystem, which handles both main and branch versions of files separately.
-
-I'm also looking at the heartbeat scheduler, which periodically checks for pending todos and executes them by calling into the agent loop through a task queue.
-
-For the todo execution itself, the system passes the task as a user message and lets the agent handle it, while a separate TD review process runs asynchronously to provide feedback on the agent's work.
-
-The pod deployment follows a predictable path: it detects the app type, generates a containerfile, builds the image, creates the pod, and runs a health check before returning the result to the agent.
-
-I'm also tracking the state management through various context objects that maintain the agent's project, conversation history, heartbeat status, and platform-specific information like which port the branch is running on.
-
-Now I'm mapping out the remaining state files and their purposes—port allocations, conversation history, long-term memory stores, TD reports, and platform sync tracking between production and branch environments. The branch/prod sync flows through three main endpoints that handle status checking, deployment, and cache synchronization.
+I have enough context to trace the complete flows now. I'll write the DATA_FLOW.md documenting all 7 flows, using inline code references to show how data moves through the system based on what's actually in the provided code.
 </think>
 
 # aelidirect -- Data Flow
 
+> **Note on scope:** The following traces are based on the provided source files (`tools.py`, `llm_client.py`, `direct_todo.py`, `pod.py`, `test_agent.py`, `constants.py`, `index.html`). Missing files (`main.py`, `pipeline.py`, `state.py`, `heartbeat.py`, `platform_routes.py`, `history.py`) are reconstructed from cross-references and call patterns in the provided code.
+
+---
+
 ## 1. Main Chat Flow
 
-**Entry: `frontend/index.html` → `sendMessage()`**
+**User message → SSE stream → agent loop → response**
+
 ```
-User types message → textarea → "Send" button clicked
-  → sendMessage() [index.html ~line 750]
-    → messages.push({role:"user", content})
-    → renderMessages()
-    → fetch('/api/chat/stream', {method:"POST", body: JSON.stringify({message, project_name}), headers: {Content-Type:..., Accept:"text/event-stream"}})
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              MAIN CHAT FLOW                                         │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+  FRONTEND (index.html)
+  │
+  │ sendMessage() → POST /api/direct/start
+  │   { message: "...", project_dir: "..." }
+  │   ───────────────────────────────────────────►  backend/main.py
+  │                                                          │
+  │                                                          ▼
+  │                                                   SSE stream_url
+  │                                                   returned to client
+  │
+  │   EventSource(stream_url)  ──────────────────►  backend/main.py
+  │        (client-side SSE consumer)                  │
+  │                                                     ▼
+  │                                              pipeline.run_agent_loop()
+  │                                                   (pipeline.py)
+  │                                                        │
+  │                                                        ▼
+  │                                             llm_client.call_llm()
+  │                                                   with tools=[TOOL_DEFINITIONS]
+  │                                                        │
+  │   ◄────────── SSE events (event: response) ────────────
+  │   ◄────────── SSE events (event: done) ───────────────
+  │
+  │ addMsg('assistant', content)   ──► rendered in .messages div
+  │ addMsg('success', ...)        ──► shown on completion
 ```
 
-**Step 1 — Backend receives stream request: `POST /api/chat/stream`**
-```
-@app.post("/api/chat/stream")           [main.py:line ~360]
-  → project_name = body.get("project_name")
-  → project_dir  = PROJECTS_ROOT / project_name
-  → history      = _load_conversation_history(project_name)   [memory system]
-  → return StreamingResponse(_stream_chat(...), media_type="text/event-stream")
-```
+**Key data transformations:**
 
-**Step 2 — `_stream_chat()` generator starts**
-```
-_stream_chat(project_name, user_message)   [main.py:line ~290]
-  → _direct_state["project_dir"]   = project_dir
-  → _direct_state["project_name"]  = project_name
-  → session_id = project_name
-  → set_active_project(project_dir)   [tools.py:file_cache]
-  → set_agent_state(project_dir, session_id, port, project_name)  [pod.py]
-  → yield sse_event("phase", {"phase": "thinking", ...})
-  → yield sse_event("turn", {"turn": 1, "max_turns": 15, "step": "loading history"})
-```
+| Step | Source | Function | Output |
+|------|--------|----------|--------|
+| Start chat | `index.html` | `sendMessage()` (line ~800) | POST body with `{message, project_dir}` |
+| Stream URL | `main.py` | `POST /api/direct/start` route | `{stream_url: "/api/direct/stream/..."}` |
+| SSE events | `main.py` | SSE generator in stream route | `event: response`, `event: tool_call`, `event: done` |
+| Display | `index.html` | `SSE handler` (line ~950) | DOM insertion via `addMsg()` |
 
-**Step 3 — History is loaded and message is appended**
-```
-→ messages = [{"role":"system","content":DIRECT_AGENT_PROMPT}, ...prior...]
-→ messages.append({"role":"user","content":user_message})
-→ if history: messages.insert(1, {"role":"system","content":f"CONVERSATION HISTORY:\n{history}"})
-```
+**SSE event types** (inferred from `test_agent.py` line 270 and frontend handler):
+- `event: response` → `d.content` displayed as assistant message
+- `event: tool_call` → tool name + arguments logged (hidden from user)
+- `event: done` → marks conversation end, hides spinner
+- `event: error` → shown as error message
 
-**Step 4 — Agent loop begins**
-```
-→ for turn 1..max_turns (15):
-    → sse_event("turn", {"turn": t, "max_turns": 15, "step": "calling LLM"})
-    → prov = _get_provider()
-    → result = call_llm(selected, api_key, base_url, model, messages, TOOL_DEFINITIONS)  [llm_client.py:35]
-    → parsed = extract_response(result)    [llm_client.py:88]
-```
+**Tool result flow (interleaved):**
 
-**Step 5 — LLM response parsed and SSE-ed**
 ```
-→ if parsed["type"] == "text":
-    → yield sse_event("message", {"content": text, "done": True})
-    → _save_conversation(project_name, user_message, messages)
-    → yield sse_event("done", {})
-    → break
-```
-
-**Step 6 — Frontend EventSource receives SSE events**
-```
-→ source = new EventSource('/api/chat/stream?...')
-→ source.addEventListener('phase', e => {...})   [index.html ~line 800]
-→ source.addEventListener('message', e => { render assistant bubble })
-→ source.addEventListener('turn', e => { update turn counter })
-→ source.addEventListener('done', e => { hide spinner; scrollBottom() })
+  Agent loop outputs tool_call event
+         │
+         ▼
+  frontend: SSE handler sees event_type == "tool_call"
+         │
+         ▼
+  Call execute_tool() server-side (tool result string)
+         │
+         ▼
+  SSE event: "tool_result" with result string
+         │
+         ▼
+  frontend logs it as .msg.tool bubble
+         │
+         ▼
+  Agent loop sends tool result back to LLM as assistant message
+         │
+         ▼
+  LLM produces next response (more text OR more tool calls)
 ```
 
 ---
 
 ## 2. Tool Call Loop
 
-**LLM decides to call a tool → `parsed["type"] == "tool_call"`**
+**LLM response → tool execution → result → next LLM call**
 
-**Step 1 — Tool calls extracted from LLM response**
-```python
-# main.py line ~330
-tool_calls = parsed["tool_calls"]  # list of {id, function_name, arguments}
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           TOOL CALL LOOP                                           │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+  llm_client.py: call_llm()
+  ─────────────────────────────────────────────────────────────────────
+  │ Input: messages (with prior tool results), tools=[TOOL_DEFINITIONS]
+  │ Output: raw LLM API response (dict)
+  ▼
+  llm_client.py: extract_response()  (line 63)
+  ─────────────────────────────────────────────────────────────────────
+  │ Parses raw response:
+  │   - If message.tool_calls exists → type="tool_call"
+  │   - Otherwise → type="text"
+  ▼
+  ┌─────────────┐     ┌──────────────────────────────────────────────┐
+  │ type=text   │     │ type=tool_call                               │
+  └─────────────┘     └──────────────────────────────────────────────┘
+         │                      │
+         ▼                      ▼
+  Return to pipeline      For each tool_call in tool_calls:
+  as final response         │
+                            ▼
+                     tools.py: execute_tool(name, arguments, project_dir)
+                     ───────────────────────────────────────────────
+                     │ Line 172: dispatches by name
+                     │ Line 174: list_files       → _tool_list_files()
+                     │ Line 176: read_file         → _tool_read_file()
+                     │ Line 178: edit_file        → _tool_edit_file()
+                     │ Line 180: patch_file       → _tool_patch_file()
+                     │ Line 184: read_file_tail   → _tool_read_file_tail()
+                     │ Line 186: read_lines       → _tool_read_lines()
+                     │ Line 188: grep_code        → _tool_grep_code()
+                     │ Line 190: read_project     → _tool_read_project()
+                     │ Returns: string result
+                     ▼
+                     ┌──────────────────────────────────────────────┐
+                     │ CACHE CHECK (for read operations)             │
+                     │ tools.py: file_cache_get(project, path)      │
+                     │   Line 53: checks _file_cache_branch for     │
+                     │            platform project, else main_cache │
+                     │   Line 56: mtime validation via _file_cache_ │
+                     │            mtime dict                        │
+                     └──────────────────────────────────────────────┘
+                            │
+                            ▼
+                     tool result string
+                            │
+                            ▼
+                     Append as assistant message to messages[]
+                     ───────────────────────────────────────────────
+                     │ role: "assistant"
+                     │ content: tool call description
+                     │ tool_call_id: "..."
+                     │ name: tool_name
+                     │
+                     │ role: "tool"
+                     │ tool_call_id: "..."
+                     │ content: tool_result_string
+                     ▼
+                     BACK TO: llm_client.call_llm()  ← loop repeats
+                            │
+                            ▼
+                     (until LLM returns type=text)
 ```
 
-**Step 2 — Each tool call is executed in sequence**
-```python
-for tc in tool_calls:
-    name = tc["function_name"]
-    args = tc["arguments"]
-    
-    # Read-only check (no turn cost)
-    if _is_readonly_tool_call(tc):
-        result = execute_tool(name, args, project_dir)  [tools.py:200]
-    else:
-        # Send tool call event to frontend
-        yield sse_event("tool_call", {"name": name, "args": args})
-        # Execute
-        result = execute_tool(name, args, project_dir)  [tools.py:200]
-        # Send result
-        yield sse_event("tool_result", {"name": name, "result": result[:5000]})
-```
+**Tool schema definitions** (`tools.py` line 217–313):
 
-**Step 3 — Tool result appended to messages for next LLM call**
-```python
-# main.py line ~345
-messages.append({
-    "role": "assistant",
-    "content": parsed.get("content", "") or "",
-    "tool_calls": [
-        {"id": tc["id"], "function": {"name": tc["function_name"], "arguments": json.dumps(tc["arguments"])}}
-        for tc in tool_calls
-    ]
-})
-messages.append({
-    "role": "tool",
-    "tool_call_id": tool_calls[0]["id"],   # only first (loop over tools below)
-    "name": tool_name,
-    "content": result,
-})
-```
+| Tool | Parameters | Executor | Notes |
+|------|------------|----------|-------|
+| `list_files` | `path` | `_tool_list_files()` | Dir listing, skip hidden |
+| `read_file` | `path` | `_tool_read_file()` | Cache-aware, truncates at 16k chars |
+| `edit_file` | `path`, `content` | `_tool_edit_file()` | Full rewrite, updates cache |
+| `patch_file` | `path`, `old_text`, `new_text` | `_tool_patch_file()` | Targeted replace, 1-match required |
+| `read_file_tail` | `path`, `lines` | `_tool_read_file_tail()` | Last N lines, truncation detection |
+| `read_lines` | `path`, `start`, `end` | `_tool_read_lines()` | Range read with ±20 line padding |
+| `grep_code` | `pattern` | `_tool_grep_code()` | Case-insensitive search across all files |
+| `read_project` | — | `_tool_read_project()` | Full batch read, budget-gated at 100k chars |
 
-**Wait — the code actually appends each tool result separately. Corrected:**
-```python
-for tc in tool_calls:
-    result = execute_tool(name, args, project_dir)
-    messages.append({"role": "tool", "tool_call_id": tc["id"], "name": name, "content": result})
-    # Then call LLM again with accumulated messages
-```
+**File cache architecture** (`tools.py` lines 25–50):
 
-**Step 4 — LLM called again with tool result, loop continues**
-```python
-# back to top of for loop → call_llm again → extract_response
-# LLM may return: more tools, or final text
 ```
+  _file_cache_main    ──► prod source files (platform + all projects)
+  _file_cache_branch   ──► branch edits (platform self-editing)
+  _file_cache_mtime   ──► disk mtime tracker for invalidation
 
-**Key file functions:**
-| Tool | Executor | File | Lines |
-|------|----------|------|-------|
-| `read_file` | `_tool_read_file` | `tools.py` | 265–282 |
-| `patch_file` | `_tool_patch_file` | `tools.py` | 290–340 |
-| `edit_file` | `_tool_edit_file` | `tools.py` | 258–263 |
-| `grep_code` | `_tool_grep_code` | `tools.py` | 358–374 |
-| `read_project` | `_tool_read_project` | `tools.py` | 377–420 |
-| `deploy_pod` | (defined in main.py, calls `spin_up_pod`) | `main.py` | ~510 |
-
-**File cache hit path (read_file for platform project):**
-```
-_tool_read_file(project, path)
-  → file_cache_get(project, path)   [tools.py:83] — checks branch cache for platform
-  → if cache hit AND mtime matches: return cached content
-  → else: read from disk → file_cache_set → return
+  Cache key: (str(project.resolve()), rel_path)
+  Platform project detection: project.name == PLATFORM_PROJECT_NAME
+                              or project.resolve() == BRANCH_ROOT.resolve()
 ```
 
 ---
 
 ## 3. Memory System
 
-### Short-Term Memory (Conversation History)
+**Long-term save/load + short-term conversation history**
 
-**Save flow:**
-```python
-_save_conversation(project_name, user_message, messages)  [main.py:line ~175]
-  → conv_dir = _DIRECT_CONVERSATIONS_DIR / project_name   # .direct_conversations/{project}/
-  → full_messages = []  (strip system, keep user/assistant/tool)
-  → for each tool_call: format as "function_name(args)"
-  → write JSON: {timestamp, user_message, messages, llm_summary: None}
-  → file: {conv_dir}/{YYYY-MM-DDTHH-MM-SS}.json
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                          MEMORY SYSTEM                                              │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+  constants.py defines storage dirs (line 17–24):
+  ───────────────────────────────────────────────
+  │ .direct_memory/         → Long-term memory blobs per project
+  │ .direct_conversations/  → Per-conversation message history
+  │ .direct_todos/         → Todo items (TODOS_DIR)
+  │ .direct_heartbeats/    → Heartbeat config + history
+  │ .td_reports/           → TD review reports
+  ▼
+
+  LONG-TERM MEMORY  (inferred from constants.py + test_agent.py)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Memory files: .direct_memory/{project_name}.json
+  │ Format (inferred): {summary, last_updated, ...}
+  │
+  │ Access: tools.py project_env functions
+  │   read_project_env(project_dir) → dict from project_env.md
+  │   write_project_env(project_dir, ...) → writes project_env.md
+  │
+  │ Platform memory: BRANCH_ROOT/.direct_memory/
+  │                  PROD_ROOT/.direct_memory/
+  │                  (separate memory per environment)
+  ▼
+
+  SHORT-TERM CONVERSATION HISTORY
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Storage: .direct_conversations/{project_name}/{conversation_id}.json
+  │ (seen in test_agent.py line 18: BASE_URL, backend/.direct_conversations)
+  │
+  │ In test_agent.py: send_to_chat_pipeline() (line 266)
+  │   1. POST /api/direct/start {message, project_dir}
+  │   2. Consume SSE stream, collecting all response/done events
+  │   3. Return collected response text
+  │
+  │ Conversation token budget: CONVERSATION_TOKEN_BUDGET = 50,000
+  │ Chars-per-token: CHARS_PER_TOKEN = 4
+  │ Summarize batch size: SUMMARIZE_BATCH_SIZE = 10
+  │
+  │ TD analysis context: TRUNCATE_TD_CONTEXT = 400,000 chars cap
+  │ TD analysis recent count: TD_ANALYSIS_RECENT_COUNT = 30 conversations
+  ▼
+
+  TODO-STORE (direct_todo.py)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ File: .direct_todos/{project_name}.json
+  │ (safe name: project_name with "/" and ".." replaced)
+  │
+  │ Structure per todo item:
+  │   {
+  │     id: str (uuid[:8]),
+  │     task: str,
+  │     category: "feature" | "debug" | "question" | "refactor",
+  │     status: "pending" | "attempted" | "done",
+  │     created_at: ISO timestamp,
+  │     started_at: ISO timestamp | null,
+  │     completed_at: ISO timestamp | null,
+  │     duration_secs: int | null,
+  │     attempts: int,
+  │     result_status: "success" | "failure" | "partial" | null,
+  │     last_result: str | null,     ← TRUNCATE_TODO_RESULT = 10,000
+  │     td_review: str | null,
+  │   }
+  │
+  │ Key functions (direct_todo.py):
+  │   add_todo(project_name, task, category)     → creates + persists
+  │   update_todo(project_name, todo_id, status, result) → updates + classifies
+  │   _classify_result(result) → scans for fail/partial signals
+  │   get_todos(project_name) → loads all
+  │   get_pending_todos(project_name) → filters status in (pending, attempted)
+  ▼
 ```
 
-**Load flow:**
+**Result classification logic** (`direct_todo.py` lines 44–52):
+
 ```python
-_load_conversation_history(project_name)   [main.py:line ~190]
-  → conv_dir = _DIRECT_CONVERSATIONS_DIR / project_name
-  → glob("*.json") → sort → keep last _CONVERSATION_HISTORY_LIMIT (50)
-  → _conv_to_text(conv): 
-      if llm_summary → "[timestamp] {summary}"
-      else: "[timestamp] User: {msg}\n  Assistant: {content}\n  Tools: {tools}"
-  → total_text = join all conversations with "\n\n"
-  → if total_tokens > _CONVERSATION_TOKEN_BUDGET (50k):
-      → _summarize_old_conversations(conversations, prov, selected)  [main.py:line ~210]
-      → saves summaries back to conv["llm_summary"]
-  → return total_text (inserted as system message at index 1)
+def _classify_result(result: str) -> str:
+    # failure signals: error, failed, traceback, exception, cannot, could not, unable, crash, fatal
+    # partial signals: partially, issue, warning, "but ", "however", not fully, incomplete, workaround
+    # Has failure + not fixed → "failure"
+    # Has partial signal     → "partial"
+    # Otherwise              → "success"
 ```
-
-**Summarization flow:**
-```python
-_summarize_old_conversations(conversations, prov, selected)  [main.py:line ~210]
-  → unsummarized = conversations[:-10] without llm_summary
-  → batch_text = concatenate last 10 conversations
-  → call_llm(provider, summarization_prompt, temperature=0.2)
-  → for each conv: conv["llm_summary"] = parsed summary line
-  → write summaries back to JSON files
-```
-
-### Long-Term Memory (Persistent Key-Value Store)
-
-**Storage location:** `_DIRECT_MEMORY_DIR / {project_name} / {key}.md`
-```python
-_MEMORY_DIR = Path(__file__).parent / ".direct_memory"   [main.py:line ~120]
-```
-
-**`memory_save(key, content)` tool:**
-```python
-# Defined in TOOL_DEFINITIONS (main.py, tools list)
-# Executor: _tool_memory_save in main.py (not shown in excerpt but in TOOL_DEFINITIONS)
-→ memory_dir = _DIRECT_MEMORY_DIR / project_name
-→ (memory_dir / "{key}.md").write_text(content)
-```
-
-**`memory_load(key)` tool:**
-```python
-→ memory_dir = _DIRECT_MEMORY_DIR / project_name
-→ return (memory_dir / "{key}.md").read_text()
-```
-
-**`memory_list()` tool:**
-```python
-→ memory_dir = _DIRECT_MEMORY_DIR / project_name
-→ return "\n".join(f.name for f in memory_dir.glob("*.md"))
-```
-
-**Memory auto-loaded at conversation start:** The `DIRECT_AGENT_PROMPT` at line ~95 tells the LLM that long-term memory is loaded automatically, but the actual loading is done by `memory_load` being called as a tool by the LLM itself at conversation start (or the results are pre-inserted as system context — the prompt says "shown below if any exist").
-
-### Memory Endpoints
-
-| Endpoint | Handler | Line | Purpose |
-|----------|---------|------|---------|
-| `GET /api/memory/{project}` | `get_memory()` | ~620 | List memory keys |
-| `GET /api/memory/{project}/{key}` | `get_memory()` | ~620 | Load specific memory |
-| `POST /api/memory/{project}/{key}` | `save_memory()` | ~635 | Save memory key-value |
-| `DELETE /api/memory/{project}/{key}` | `delete_memory()` | ~650 | Delete memory key |
 
 ---
 
 ## 4. Heartbeat / Todo Execution Flow
 
-### Todo State Machine
-
 ```
-add_todo(project_name, task)           [direct_todo.py:30]
-  → uuid[:8] → status: "pending"
-  → _save_todos(project_name, todos) → TODO_DIR/{project}.json
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                     HEARTBEAT / TODO AUTO-EXECUTION                               │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
-update_todo(..., status="attempted")    [direct_todo.py:60]
-  → sets started_at, increments attempts, saves last_result
+  HEARTBEAT CONFIG  (direct_todo.py lines 93–110)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ File: .direct_heartbeats/{project_name}.json
+  │ Structure:
+  │   {
+  │     enabled: bool,
+  │     interval_minutes: int,
+  │     last_run: ISO timestamp | null,
+  │     next_run: ISO timestamp | null,
+  │     running: bool,
+  │     history: [{timestamp, todo_id, task, result}, ...]  ← last 50
+  │   }
+  │
+  │ set_heartbeat(project_name, config)  → saves
+  │ get_heartbeat(project_name)         → loads
+  ▼
 
-update_todo(..., status="done")         [direct_todo.py:60]
-  → sets completed_at, duration_secs, result_status
+  FRONTEND CONTROLS  (index.html lines 600–800)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ UI: heartbeat toggle + interval input in right-panel (Heartbeat tab)
+  │ Call: POST /api/direct/heartbeat/set {enabled, interval_minutes}
+  │
+  │ record_heartbeat_run(project_name, todo_id, task, result)
+  │   → appends to history[], keeps last 50
+  │   → updates last_run timestamp
+  ▼
+
+  HEARTBEAT EXECUTION LOOP  (heartbeat.py — not provided, inferred)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Periodic scheduler (triggered by backend timer or cron)
+  │   │
+  │   ▼
+  │ get_pending_todos(project_name)  ← from direct_todo.py
+  │   │
+  │   ▼
+  │ For each pending todo (in order):
+  │   │
+  │   ▼
+  │ update_todo(project_name, todo_id, "attempted", "")
+  │   │
+  │   ▼
+  │ Call agent pipeline with todo.task as the user message
+  │   (same flow as §1 Main Chat Flow, but initiated server-side)
+  │   │
+  │   ▼
+  │ Agent executes work, produces result
+  │   │
+  │   ▼
+  │ update_todo(project_name, todo_id, "done", result)
+  │   │
+  │   ▼
+  │ record_heartbeat_run(project_name, todo_id, task, result)
+  │   │
+  │   ▼
+  │ SSE event: "heartbeat_progress"  → frontend pollHeartbeatProgress()
+  │   (seen in index.html line 1040: /api/platform/heartbeat-progress)
+  ▼
+
+  FRONTEND HEARTBEAT PROGRESS POLLING  (index.html lines 1020–1100)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ pollHeartbeatProgress()  ──► GET /api/platform/heartbeat-progress
+  │   │
+  │   ▼
+  │ If active: shows pulsing branch-bar with step info
+  │   "step N · write turn/max_turns · elapsed time"
+  │   Polls every 1.5s while active
+  │   │
+  │   ▼
+  │ If finished: shows status badge (success/failure/partial)
+  │   Refreshes todos + heartbeat data
+  │   Switches back to branch status view after 8s
+  │   │
+  │   ▼
+  │ If idle: shows branch status (from /api/platform/branch-status)
+  │   Polls every 30s
+  ▼
 ```
 
-### Heartbeat Scheduler
-
-**Startup registration:**
-```python
-@app.on_event("startup")               [main.py:line ~700]
-  → asyncio.create_task(_heartbeat_scheduler())
-  → Clear stuck "running" flags from previous server process
-```
-
-**Main scheduler loop:**
-```python
-_heartbeat_scheduler()                  [main.py:line ~670]
-  → while True:
-      → for each hb_file in HEARTBEAT_DIR.glob("*.json"):
-          → hb = json.loads(read)
-          → if not hb["enabled"]: continue
-          → if hb["running"]: continue  # skip if already running
-          → Compute next_run from interval_minutes
-          → if now >= next_run:
-              → pending = get_pending_todos(project_name)
-              → if pending:
-                  → hb["running"] = True
-                  → save_heartbeat(project_name, hb)
-                  → await _execute_todo_via_chat(project_dir, pending[0])
-                  → hb["running"] = False
-                  → save_heartbeat(project_name, hb)
-      → await asyncio.sleep(60)  # check every minute
-```
-
-### Todo Execution via Chat
-
-```python
-_execute_todo_via_chat(project_dir, todo)  [main.py:line ~560]
-  → _update_heartbeat_progress(project_dir, {"active": True, "todo_id": todo["id"], "task": todo["task"]})
-  → update_todo(project_name, todo["id"], "attempted")
-  → Build messages:
-      system_prompt = DIRECT_AGENT_PROMPT + todo_task_context
-      messages = [system, history, user: task]
-  → Call LLM in a loop (max_turns=20 for todo execution)
-  → Final result = accumulated assistant text
-  → update_todo(project_name, todo["id"], "done", result)
-  → _update_heartbeat_progress(project_dir, {"active": False, "result_status": ...})
-  → _save_conversation(project_name, task, messages)
-  → _run_td_review_for_todo(project_dir, todo["id"], task, result)  [async, non-blocking]
-```
-
-### TD Review (Technical Director)
-
-```python
-_run_td_review_for_todo(project_name, todo_id, task, result)  [main.py:line ~760]
-  → call_llm(provider, TODO_TD_REVIEW_PROMPT, temperature=0.3)
-  → review_text = parsed["content"]
-  → td_status = _parse_td_verdict(review_text)   # extracts STATUS: PASS|PARTIAL|FAIL|INCOMPLETE
-  → set_todo_review(project_name, todo_id, review_text, td_status)  [direct_todo.py]
-      → updates t["td_review"] and t["result_status"] in TODO file
-```
-
-### Heartbeat Progress Tracking (for frontend polling)
-
-```python
-_update_heartbeat_progress(project_dir, updates)  [main.py:line ~545]
-  → HEARTBEAT_DIR / {project}.json updated with:
-      active, project, todo_id, task, step, turn, max_turns, 
-      total_steps, started_at, finished_at, result_status, result_message
-```
-
-**Frontend polls via:**
-```
-GET /api/platform/heartbeat-progress     [main.py:line ~560]
-  → returns _heartbeat_progress dict
-  → polled every 5s by pollHeartbeatProgress() [index.html]
+**Frontend SSE handler for heartbeat** (`index.html` line 1042):
+```javascript
+// Merged into checkBranchStatus() + pollHeartbeatProgress()
+// pollHeartbeatProgress() polls /api/platform/heartbeat-progress
+// checkBranchStatus() polls /api/platform/branch-status
 ```
 
 ---
 
 ## 5. Deployment Flow (Pod Management)
 
-**Entry: `deploy_pod(project_name, project_dir, pod_port)` tool called by agent**
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         POD DEPLOYMENT FLOW                                         │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
-**Defined in main.py (not shown in tools.py):**
-```python
-# TOOL_DEFINITIONS includes deploy_pod with schema
-# Executor: _tool_deploy_pod (defined inline in main.py, calls spin_up_pod from pod.py)
+  pod.py: spin_up_pod()  — THE SINGLE DEPLOY FUNCTION  (line 175)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Input: project_dir, project_name, host_port, version
+  │ Output: {success, pod_name, port, version, message, logs, phase}
+  │
+  │ PHASE 1: DESTROY  (line 193)
+  │   _force_destroy_pod(pod_name)
+  │     → podman pod rm -f {pod_name}
+  │   │
+  │   ▼
+  │   Wait for port release (up to 15s)
+  │   │
+  │   ▼
+  │   If port still occupied:
+  │     _kill_pod_on_port(host_port)  → finds + destroys aelimini pod on port
+  │     Wait another 5s
+  │
+  │ PHASE 2: BUILD  (line 211)
+  │   detect_app_type(project_dir)
+  │     → checks for FastAPI/Flask in *.py files
+  │     → checks for index.html
+  │     → returns: "fastapi" | "flask" | "static" | "python-http"
+  │   │
+  │   ▼
+  │   generate_containerfile(project_dir, app_type, port)
+  │     → writes Containerfile to project_dir/
+  │     → FastAPI:  uvicorn main:app --host 0.0.0.0 --port 8000
+  │     → Flask:    flask --app main run --host 0.0.0.0 --port 8000
+  │     → Static:   python3 -m http.server 8000 --directory /app
+  │   │
+  │   ▼
+  │   podman build -t {image_name} -f Containerfile {project_dir}
+  │     → timeout: 120s
+  │
+  │ PHASE 3: START  (line 220)
+  │   podman pod create --name {pod_name} -p {host_port}:8000
+  │   │
+  │   ▼
+  │   podman run -d --pod {pod_name} --name {pod_name}-app {image_name}
+  │     → timeout: 60s
+  │
+  │ PHASE 4: HEALTH CHECK  (line 230)
+  │   health_check(host_port, "/health", retries=15, delay=2.0)
+  │     → HTTP GET http://localhost:{port}/health
+  │     → Waits for HTTP 200
+  │     → Returns (True, msg) or (False, last_error)
+  │
+  │ RESULT:
+  │   success=True  → pod is running, health confirmed
+  │   success=False → {logs: container logs, phase: where it failed}
+  │                    phase ∈ {"destroy", "build", "start", "health"}
+  ▼
+
+  PORT ALLOCATION  (pod.py lines 32–67)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ .ports.json tracks {project_name: port}
+  │ PORT_RANGE = 11001–11099
+  │
+  │ get_available_port(project_name):
+  │   1. Check .ports.json
+  │   2. Check podman pod ls for actual port usage
+  │   3. Check OS-level socket availability
+  │   4. First free port wins → saved to .ports.json
+  │
+  │ release_port(project_name) → removes from .ports.json
+  ▼
+
+  POD NAMING  (pod.py line 71)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ _safe_pod_name(project_name):
+  │   → lowercase, alphanumeric only, _ replaces special chars
+  │   → truncated to 40 chars (SAFE_NAME_MAX_LENGTH)
+  │   → prefixed "aelimini-"
+  │   → e.g., "aelimini-my_project"
+  ▼
+
+  DIAGNOSTICS TOOLS  (pod.py lines 380–450)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Tools available to Diagnostics agent:
+  │   list_project_files  → _pt_list_files()
+  │   read_project_file   → _pt_read_file()
+  │   edit_project_file   → _pt_edit_file()
+  │   check_pod_status    → get_pod_status_by_name() + http_get()
+  │   get_container_logs  → _get_logs()
+  │
+  │ Agent state set via: set_agent_state(project_dir, session_id, host_port)
+  ▼
 ```
 
-**Full lifecycle through `spin_up_pod()`:**
+**Pod lifecycle state machine:**
 
-```python
-spin_up_pod(project_dir, project_name, host_port, version)  [pod.py:line ~130]
-
-Phase 1 — DESTROY:
-  → pod_name = _safe_pod_name(project_name)   # "aelimini-{safe_name}"
-  → _force_destroy_pod(pod_name)              # podman pod rm -f
-  → Wait up to 15s for port to be freed
-  → if port still occupied: _kill_pod_on_port(port) → podman pod rm -f
-
-Phase 2 — BUILD:
-  → detect_app_type(project_dir)             [pod.py:70] — scans for FastAPI/Flask/static
-  → generate_containerfile(project_dir, app_type)  [pod.py:85]
-  → podman build -t {image_name} -f Containerfile {project_dir}
-  → if failed: return {success: False, phase:"build", message: stderr}
-
-Phase 3 — CREATE POD:
-  → podman pod create --name {pod_name} -p {host_port}:8000
-  → podman run -d --pod {pod_name} --name {pod_name}-app {image_name}
-  → if failed: return {success: False, phase:"start", logs: _get_logs(pod_name)}
-
-Phase 4 — HEALTH CHECK:
-  → health_check(host_port, "/health", retries=15, delay=2.0)  [pod.py:155]
-      → urllib.request.urlopen(f"http://localhost:{port}/health")
-      → polls every 2s, up to 15 attempts (30s total)
-  → if HTTP 200: return {success: True, message: "Health OK"}
-  → if failed: _get_logs(pod_name), inspect container state
-  → return {success: False, phase:"health", logs: ..., message: ...}
 ```
-
-**Port allocation:**
-```python
-get_available_port(project_name)        [pod.py:45]
-  → Load .ports.json
-  → Check podman pod ls for occupied ports
-  → Check OS socket with _is_port_free(port)  [pod.py:35]
-  → First free port in range 11001–11099 is allocated
-  → Saves {project_name: port} to .ports.json
-```
-
-**Tool result returned to agent:**
-```
-"Pod aelimini-{project} running on port {port}\n
-Health OK (attempt N): HTTP 200\n
-Body preview: {body}"
+  spin_up_pod()
+       │
+       ├─► [destroy] ──► _force_destroy_pod() ──► podman pod rm -f
+       │                          │
+       │                          ├─► port free ──► continue
+       │                          └─► port busy ──► _kill_pod_on_port()
+       │
+       ├─► [build] ────► detect_app_type() ──► generate_containerfile()
+       │                    └─► podman build -t {image}:v{version}
+       │
+       ├─► [start] ────► podman pod create -p {port}:8000
+       │                    └─► podman run -d --pod {name}
+       │
+       └─► [health] ───► health_check() ──► HTTP GET /health
+                            │
+                            ├─► HTTP 200 within 15×2s ──► success=True
+                            └─► timeout ──► success=False, logs captured
 ```
 
 ---
 
 ## 6. Config and State Management
 
-### Config File
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                     CONFIG AND STATE MANAGEMENT                                    │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
-**Location:** `backend/.config.json`
+  constants.py  (line 14–24)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Config file: backend/.config.json
+  │ Ports file:   backend/.ports.json
+  │
+  │ All paths defined here, imported everywhere:
+  │   BACKEND_DIR, PROD_ROOT, BRANCH_ROOT, PROJECTS_ROOT
+  │   MEMORY_DIR, CONVERSATIONS_DIR, TODOS_DIR, HEARTBEATS_DIR
+  │   TD_REPORTS_DIR
+  ▼
 
-**Load on startup** (lines ~25–40):
-```python
-CONFIG_FILE = Path(__file__).parent / ".config.json"
-# If exists: merge saved providers, selected, pod_host into config dict
+  RUNTIME CONFIG  (inferred from test_agent.py + platform routes)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ main.py likely loads .config.json at startup
+  │ Contains: selected provider, api_key, base_url, model
+  │   (referenced in test_agent.py line 133: from main import config)
+  │
+  │ Config per request:
+  │   project_dir passed through: tools.py execute_tool(project_dir)
+  │   _active_project_dir dict in tools.py (line 21)
+  │     set_active_project(project_dir) / get_active_project()
+  ▼
+
+  AGENT STATE (per-request context)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ tools.py: _active_project_dir = {"path": None}
+  │   → thread/module-level global for fallback project
+  │   → MUST pass project_dir explicitly in execute_tool()
+  │
+  │ pod.py: _agent_state = {project_dir, project_name, session_id, host_port}
+  │   → set_agent_state() / get_agent_port()
+  │   → Used by Diagnostics agent tools
+  │
+  │ llm_client.py: no persistent state (stateless per call)
+  ▼
+
+  Dual environment roots  (constants.py lines 10–12)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ PROD_ROOT   = backend/..     (aelidirect/ — production code)
+  │ BRANCH_ROOT = /home/aeli/projects/aelidirect_branch
+  │
+  │ PROJECTS_ROOT = PROD_ROOT / "projects"
+  │   → All user projects stored under aelidirect/projects/
+  │
+  │ Platform self-editing project:
+  │   PLATFORM_PROJECT_NAME = "aelidirect_platform"
+  │   (special: uses branch_cache instead of main_cache)
+  ▼
 ```
 
-**Runtime save** (line ~42):
-```python
-_save_config()  # writes entire config dict back to .config.json
-# Called by: /api/config PUT handler
-```
+**Config file schema** (inferred from usage):
 
-### Provider Config
-
-```python
-config = {
-    "providers": {
-        "openrouter": {"name": "OpenRouter", "api_key": "", "base_url": "...", "model": "..."},
-        "minimax":    {"name": "MiniMax",    "api_key": "", "base_url": "...", "model": "..."},
+```json
+{
+  "selected": "openrouter",          // active provider key
+  "providers": {
+    "openrouter": {
+      "api_key": "sk-...",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "anthropic/claude-..."
     },
-    "selected": "minimax",
-    "pod_host": "100.92.245.67",
+    "minimax": {
+      "api_key": "...",
+      "base_url": "https://api.minimax.chat/v1",
+      "model": "..."
+    }
+  }
 }
 ```
 
-**API endpoints:**
-| Endpoint | Handler | Purpose |
-|----------|---------|---------|
-| `GET /api/config` | `get_config()` | Return config (masked API keys) |
-| `PUT /api/config` | `save_config()` | Update and persist config |
+**LLM constants** (`constants.py` lines 60–64):
 
-### Runtime State Variables
-
-| Variable | Type | Scope | Purpose |
-|----------|------|-------|---------|
-| `_direct_state` | dict | per-request via closure | project_dir, project_name, port for current stream |
-| `_active_project_dir` | dict | global | Current project for tool execution (legacy path) |
-| `TOOL_DEFINITIONS` | list | global | Sent to LLM on every call — available tools |
-| `POD_TOOL_DEFINITIONS` | list | global | Tools for Diagnostics agent |
-| `_heartbeat_progress` | dict | global | Live progress of current heartbeat run |
-
-### Persistent State Files
-
-| File | Format | Location | Purpose |
-|------|--------|----------|---------|
-| `.config.json` | JSON | `backend/` | Provider API keys, selected provider, pod_host |
-| `.ports.json` | JSON | `backend/` | Project name → port number mapping |
-| `{project}.json` | JSON | `backend/.direct_todos/` | Todo list per project |
-| `{project}.json` | JSON | `backend/.direct_heartbeats/` | Heartbeat config per project |
-| `*.json` | JSON | `backend/.direct_conversations/{project}/` | Conversation history per project |
-| `*.md` | Markdown | `backend/.direct_memory/{project}/` | Long-term memory key-value |
-| `*.md` | Markdown | `backend/.td_reports/` | TD analysis reports |
-
-### Platform Self-Editing State
-
-**`restart_platform()` flow:**
 ```python
-# Defined in main.py (tool executor)
-  → bash('python3 -m py_compile backend/main.py')   # syntax check
-  → if platform project: copy files to _BRANCH_ROOT (/home/aeli/projects/aelidirect_branch)
-  → bash('systemctl restart aelidirect-branch')   # restart branch server on 10101
-  → http_check(10101, "/health")                   # verify branch is up
+LLM_TIMEOUT = 180.0          # per-request timeout
+LLM_RETRYABLE_CODES = {429, 502, 503, 504}
+LLM_MAX_RETRIES = 3
+LLM_RETRY_DELAY = 3.0        # exponential backoff: delay × (attempt+1)
+LLM_MAX_TOKENS = 16000
 ```
 
 ---
 
 ## 7. Branch / Prod Sync Flow
 
-### File Cache Architecture
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                     BRANCH / PROD SYNCHRONIZATION                                   │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
-**Two-cache system** (tools.py, lines ~55–80):
+  DUAL FILE CACHE  (tools.py lines 25–50)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Two independent caches:
+  │
+  │   _file_cache_main   ──► PROD source files (source of truth)
+  │   _file_cache_branch ──► BRANCH edits (diverges from prod)
+  │
+  │ Cache key: (str(project.resolve()), rel_path)
+  │ Platform project uses branch cache, all others use main cache
+  │
+  │   _is_platform_project(project):
+  │     → project.name == "aelidirect_platform"
+  │     → OR project.resolve() == BRANCH_ROOT.resolve()
+  │
+  │ Cache operations:
+  │   file_cache_get()     → reads branch or main based on project
+  │   file_cache_set()     → writes branch or main based on project
+  │   file_cache_set_main()→ direct write to main cache (init/wipe)
+  │   file_cache_wipe_branch() → main → branch (branch reset)
+  │   file_cache_deploy_to_main() → branch → main (successful deploy)
+  │   file_cache_clear()   → selective or full cache clear
+  ▼
+
+  BRANCH WIPE  (reset branch to prod)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Frontend: wipeBranch()  (index.html line 895)
+  │   → POST /api/platform/branch-wipe
+  │   → Confirm dialog before action
+  │
+  │ Backend (platform_routes.py — not provided, inferred):
+  │   │
+  │   ▼
+  │   1. List all files in BRANCH_ROOT
+  │   2. For each file, if exists in PROD_ROOT:
+  │        copy PROD_ROOT/file → BRANCH_ROOT/file
+  │   3. For each file only in BRANCH_ROOT (non-platform data):
+  │        delete BRANCH_ROOT/file
+  │   4. Call file_cache_wipe_branch()  ← tools.py line 47
+  │        → _file_cache_branch.clear()
+  │        → _file_cache_branch.update(_file_cache_main)
+  │   5. Sync data dirs from PROD to BRANCH:
+  │        .direct_conversations, .direct_todos, .direct_heartbeats
+  │   6. Return {ok: bool, wiped: [files], errors: [...]}
+  │
+  │ Frontend response:
+  │   addMsg('system', 'Branch wiped — N items synced from prod.')
+  ▼
+
+  BRANCH DEPLOY  (deploy branch to prod)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ Frontend: deployBranch()  (index.html line 917)
+  │   → POST /api/platform/branch-deploy
+  │   → Confirm dialog before action
+  │
+  │ Backend (platform_routes.py — not provided, inferred):
+  │   │
+  │   ▼
+  │   1. Compare file timestamps: BRANCH_ROOT vs PROD_ROOT
+  │      → Build list of changed files (branch newer than prod)
+  │   2. For each changed file:
+  │        copy BRANCH_ROOT/file → PROD_ROOT/file
+  │   3. Call file_cache_deploy_to_main()  ← tools.py line 50
+  │        → only platform-related entries copied
+  │        → for key, content in _file_cache_branch.items():
+  │             _file_cache_main[key] = content
+  │   4. Sync data dirs from BRANCH to PROD
+  │   5. Restart server (reload prod code)
+  │   6. Return {ok: bool, deployed: [files], errors: [...]}
+  │
+  │ Frontend: after 3s delay → location.reload()
+  │   (server restarted, client reconnects to new prod instance)
+  ▼
+
+  BRANCH STATUS CHECK  (index.html lines 850–893)
+  ──────────────────────────────────────────────────────────────────
+  │
+  │ checkBranchStatus()  → GET /api/platform/branch-status
+  │   │
+  │   ▼
+  │   Response (inferred):
+  │   {
+  │     is_branch: bool,        ← true if this IS the branch server
+  │     has_changes: bool,       ← branch files differ from prod
+  │     changes: [
+  │       {file: "backend/main.py", branch_newer: bool, prod_newer: bool},
+  │       ...
+  │     ]
+  │   }
+  │   │
+  │   ▼
+  │   If is_branch=true:
+  │     → Hide deploy/test buttons (branch server is read-only)
+  │     → Show "You are on the branch server" label
+  │   │
+  │   ▼
+  │   If is_branch=false (prod server):
+  │     → Show branch status bar
+  │     → branch_newer=true files → enable Test + Deploy buttons
+  │     → branch_newer=false → show "Ready to test" (green)
+  │
+  │ Polling: every 30s via setInterval(checkBranchStatus, 30000)
+  ▼
+```
+
+**Branch/prod file sync logic** (inferred from frontend + cache system):
 
 ```
-_file_cache_main     → reflects PROD files (source of truth)
-_file_cache_branch   → reflects BRANCH files (agent's edits diverge from prod)
-_cache_key = (resolved_project_path, rel_path)
-```
+  BRANCH WIPE (branch ← prod):
+  ┌──────────────────────────────────────────────────────────────┐
+  │ tools.py: file_cache_wipe_branch()                           │
+  │   _file_cache_branch = {}                                   │
+  │   _file_cache_branch.update(_file_cache_main)  ← copies all │
+  │                                                             │
+  │ On disk:                                                    │
+  │   for each PROD_ROOT/file:                                  │
+  │     copy → BRANCH_ROOT/file                                  │
+  │   for each BRANCH_ROOT-only file (non-data):                │
+  │     delete from BRANCH_ROOT                                  │
+  └──────────────────────────────────────────────────────────────┘
 
-**Cache behavior by project type:**
-```python
-_is_platform_project(project)  [tools.py:62]
-  → project.name == "aelidirect_platform" OR
-  → project.resolve() == /home/aeli/projects/aelidirect_branch.resolve()
-
-file_cache_get(project, path):
-  → if platform: return _file_cache_branch[key]
-  → else: return _file_cache_main[key]
-
-file_cache_set(project, path, content):
-  → if platform: _file_cache_branch[key] = content
-  → else: _file_cache_main[key] = content
-```
-
-### Sync Endpoints
-
-**`POST /api/platform/branch-status`** (check what needs syncing):
-```
-→ Compares file listings in _BRANCH_ROOT vs _PROD_ROOT
-→ For each file: compares mtime
-→ Returns: {is_branch, has_changes, changes: [{file, mtime_prod, mtime_branch, branch_newer}]}
-```
-
-**`POST /api/platform/branch-wipe`** (reset branch to prod):
-```
-→ for each file in branch listing:
-    → read from prod → write to branch
-    → update _file_cache_branch to match
-→ file_cache_wipe_branch()         [tools.py:line ~77]
-    → _file_cache_branch.clear()
-    → _file_cache_branch.update(_file_cache_main)
-→ Returns: {ok: True, wiped: [list of files], errors: []}
-```
-
-**`POST /api/platform/branch-deploy`** (push branch to prod):
-```
-→ for each changed file in branch:
-    → read from branch → write to prod
-→ file_cache_deploy_to_main()      [tools.py:line ~79]
-    → for key, content in _file_cache_branch:
-        → _file_cache_main[key] = content
-→ bash('systemctl restart aelidirect')  # restart prod on 10100
-→ Returns: {ok: True, deployed: [files], errors: []}
-```
-
-**`POST /api/platform/restart-branch`** (restart branch server):
-```
-→ bash('systemctl restart aelidirect-branch')
-→ http_check(10101, "/health")
-→ Returns: {ok: True, message: "Branch restarted on port 10101"}
-```
-
-### Frontend Sync UI
-
-```
-checkBranchStatus()          [index.html ~line 880]
-  → GET /api/platform/branch-status
-  → shows branch bar if has_changes
-  → if branch_newer: shows [Test] [Deploy to Prod] [Wipe Branch]
-
-pollHeartbeatProgress()      [index.html ~line 920]
-  → GET /api/platform/heartbeat-progress
-  → Overrides branch bar while heartbeat is active (blue spinner)
-  → After 8s post-completion: returns to branch status view
+  BRANCH DEPLOY (prod ← branch):
+  ┌──────────────────────────────────────────────────────────────┐
+  │ tools.py: file_cache_deploy_to_main()                        │
+  │   for key, content in _file_cache_branch.items():           │
+  │     _file_cache_main[key] = content                          │
+  │                                                             │
+  │ On disk:                                                    │
+  │   for each file where branch_mtime > prod_mtime:            │
+  │     copy BRANCH_ROOT/file → PROD_ROOT/file                   │
+  │   sync .direct_* dirs from BRANCH → PROD                    │
+  │   restart server on PROD                                    │
+  └──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Summary: All Key Functions and Line Numbers
+## Test-and-Fix Loop (Cross-cutting)
 
-| Component | Function | File | Line |
-|-----------|----------|------|------|
-| Chat stream | `POST /api/chat/stream` | `main.py` | ~360 |
-| Chat stream | `_stream_chat()` | `main.py` | ~290 |
-| Agent loop | `_direct_agent_loop()` | `main.py` | ~310 |
-| Tool execution | `execute_tool()` | `tools.py` | ~200 |
-| File cache get | `file_cache_get()` | `tools.py` | ~83 |
-| File cache set | `file_cache_set()` | `tools.py` | ~88 |
-| Pod lifecycle | `spin_up_pod()` | `pod.py` | ~130 |
-| Health check | `health_check()` | `pod.py` | ~155 |
-| LLM call | `call_llm()` | `llm_client.py` | ~35 |
-| LLM parse | `extract_response()` | `llm_client.py` | ~88 |
-| Todo add | `add_todo()` | `direct_todo.py` | ~30 |
-| Todo update | `update_todo()` | `direct_todo.py` | ~60 |
-| Heartbeat scheduler | `_heartbeat_scheduler()` | `main.py` | ~670 |
-| Todo execution | `_execute_todo_via_chat()` | `main.py` | ~560 |
-| TD review | `_run_td_review_for_todo()` | `main.py` | ~760 |
-| Config load | `if CONFIG_FILE.exists()` | `main.py` | ~25 |
-| Config save | `_save_config()` | `main.py` | ~42 |
-| Branch status | `POST /api/platform/branch-status` | `main.py` | ~580 |
-| Branch wipe | `POST /api/platform/branch-wipe` | `main.py` | ~595 |
-| Branch deploy | `POST /api/platform/branch-deploy` | `main.py` | ~610 |
-| Memory save | `POST /api/memory/{project}/{key}` | `main.py` | ~635 |
-| Memory load | `GET /api/memory/{project}/{key}` | `main.py` | ~620 |
-| Conv save | `_save_conversation()` | `main.py` | ~175 |
-| Conv load | `_load_conversation_history()` | `main.py` | ~190 |
-| Conv summarize | `_summarize_old_conversations()` | `main.py` | ~210 |
-| Docs regenerate | `_regenerate_docs()` | `main.py` | ~810 |
-| TD analysis | `POST /api/td-analysis` | `main.py` | ~820 |
-| Frontend send | `sendMessage()` | `index.html` | ~750 |
-| Frontend SSE | `EventSource('/api/chat/stream')` | `index.html` | ~800 |
-| Heartbeat poll | `pollHeartbeatProgress()` | `index.html` | ~920 |
-| Branch status | `checkBranchStatus()` | `index.html` | ~880 |
+The **Test Agent** (`test_agent.py`) combines multiple flows:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                        TEST-AND-FIX LOOP                                          │
+│                        test_agent.py: test_and_fix_loop()                          │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ STEP 1: PLAN (test_agent.py: plan_tests(), line 110)                          │
+  │                                                                                │
+  │   load_source_batch(scope)  → concatenates source files                        │
+  │     → PLATFORM_FILES = [frontend/index.html, backend/*.py, SPEC.md]          │
+  │     → ~37k chars total, well within context                                    │
+  │                                                                                │
+  │   call_llm(provider, model, messages, tools=None)                              │
+  │     → PLAN_SYSTEM_PROMPT as system message                                     │
+  │     → Source batch + scope + context as user message                           │
+  │     → Returns: raw LLM response                                                │
+  │                                                                                │
+  │   extract_response(raw)                                                        │
+  │     → parsed.content: JSON string with test plan                                │
+  │     → JSON parsed → {"summary", "test_cases": [...]}                            │
+  │                                                                                │
+  │   Returns: plan dict                                                           │
+  └───────────────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ STEP 2: RUN (test_agent.py: run_tests(), line 190)                            │
+  │                                                                                │
+  │   For each test case in plan["test_cases"]:                                   │
+  │                                                                                │
+  │   a) Setup: _run_setup_steps(setup_steps, base_url)                           │
+  │        → httpx.AsyncClient                                                     │
+  │        → API calls to create preconditions (e.g., create todo, enable HB)    │
+  │        → Fail here → test status="error", continue to next                    │
+  │                                                                                │
+  │   b) Execute by type:                                                         │
+  │                                                                                │
+  │      type=api   → _run_api_test(tc, base_url)                                 │
+  │        → httpx async calls (GET/POST/PUT/DELETE)                              │
+  │        → assertions: status_code, expected_fields, __exists__, __gt_zero__   │
+  │                                                                                │
+  │      type=browser → _run_browser_test(tc, base_url)                           │
+  │        → Playwright async (chromium)                                          │
+  │        → setup API calls first, then browser steps                           │
+  │        → assertions: text, visible, count, evaluate, screenshot              │
+  │                                                                                │
+  │      type=unit  → _run_unit_test(tc)                                          │
+  │        → importlib.import_module(module_name)                                  │
+  │        → getattr(mod, func_name)(*args, **kwargs)                             │
+  │        → assertions: exact match, __truthy__, __type__, __contains__         │
+  │                                                                                │
+  │   c) Collect results: [{id, name, type, status, details, ...}]                │
+  └───────────────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ STEP 3: FIX LOOP (test_agent.py: test_and_fix_loop(), line 315)               │
+  │                                                                                │
+  │   if all pass: return {final_status: "all_passed"}                            │
+  │                                                                                │
+  │   Format failures:                                                            │
+  │     format_failures_as_message(results, plan)                                 │
+  │       → extracts assertion_failed from each failed detail                    │
+  │       → returns markdown error report                                        │
+  │                                                                                │
+  │   Send to chat pipeline:                                                      │
+  │     send_to_chat_pipeline(fix_msg, project_dir)                              │
+  │       → POST /api/direct/start {message, project_dir}  (line 266)            │
+  │       → SSE stream consuming loop                                             │
+  │       → Returns: agent's fix response text                                    │
+  │                                                                                │
+  │   Reload source: load_source_batch("platform")                                │
+  │     → Files may have been edited by the fix agent                            │
+  │                                                                                │
+  │   Repeat: max MAX_TEST_FIX_ITERATIONS = 3 times                               │
+  └───────────────────────────────────────────────────────────────────────────────┘
+           │
+           ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ RESULT SUMMARY                                                                 │
+  │                                                                                │
+  │ Returns: {                                                                    │
+  │   plan: {...},                                                                │
+  │   iterations: [                                                               │
+  │     {iteration: 1, results: [...], passed: N, failed: M,                    │
+  │      fix_message: "...", fix_response: "..."},                                │
+  │     {iteration: 2, ...},                                                       │
+  │     ...                                                                       │
+  │   ],                                                                          │
+  │   final_status: "all_passed" | "max_iterations_reached",                    │
+  │   summary: "..."                                                             │
+  │ }                                                                             │
+  └───────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Summary: Cross-File Data References
+
+| From → To | Data Passed | Location |
+|-----------|-------------|----------|
+| `index.html` → `main.py` | `POST {message, project_dir}` | `sendMessage()` |
+| `main.py` → `index.html` | SSE stream URL | `/api/direct/start` response |
+| `main.py` → `pipeline.py` | stream writer | agent loop entry |
+| `pipeline.py` → `llm_client.py` | `messages[]`, `tools=TOOL_DEFINITIONS` | `call_llm()` |
+| `llm_client.py` → `pipeline.py` | `{"type": "text"\|"tool_call", ...}` | `extract_response()` |
+| `pipeline.py` → `tools.py` | `name`, `arguments`, `project_dir` | `execute_tool()` |
+| `tools.py` → `tools.py` | cache read/write | `_file_cache_*` dicts |
+| `tools.py` → disk | file I/O | `_tool_*_file()` functions |
+| `direct_todo.py` → disk | todo JSON | `_save_todos()` |
+| `pod.py` → OS | podman commands | `subprocess.run()` |
+| `pod.py` → `pod.py` | state | `_agent_state` dict |
+| `test_agent.py` → `main.py` | `POST /api/direct/start` | `send_to_chat_pipeline()` |
+| `test_agent.py` → `llm_client.py` | messages | `call_llm()` |
+| `test_agent.py` → `httpx` | HTTP requests | `_run_api_test()` |
+| `test_agent.py` → `playwright` | browser actions | `_run_browser_test()` |
+| `index.html` → `pod.py` (via backend) | pod commands | `/api/platform/*` endpoints |
+| `constants.py` → all | paths, ports, limits | imported at module top |

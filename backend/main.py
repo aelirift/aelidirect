@@ -882,6 +882,7 @@ async def direct_stream(message: str, project_dir: str):
         _test_fix_iteration = 0
         _max_test_fix = 3
         _test_evidence = []  # Collected for TD review
+        _last_response_text = ""    # Captures final agent response for TD review
 
         try:
             while action_turns < max_turns:
@@ -895,106 +896,8 @@ async def direct_stream(message: str, project_dir: str):
                 parsed = extract_response(raw)
 
                 if parsed["type"] == "text":
+                    _last_response_text = parsed["content"]
                     yield sse_event("response", {"content": parsed["content"]})
-
-                    # ── TEST PHASE ──────────────────────────────────
-                    # If agent made code changes and we have iterations left:
-                    # 1. Restart branch so changes take effect on 10101
-                    # 2. Run test agent against branch
-                    # 3. If failures, inject back as user message with context preserved
-                    if (_made_code_changes
-                            and _test_fix_iteration < _max_test_fix):
-                        try:
-                            from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
-
-                            # Restart branch server BEFORE testing so tests hit the new code
-                            if project_path.resolve() == _BRANCH_ROOT.resolve():
-                                import subprocess as _test_sp
-                                yield sse_event("test_phase", {"status": "deploying_branch"})
-                                try:
-                                    _test_sp.run(
-                                        ["systemctl", "--user", "restart", "aelidirect-branch.service"],
-                                        check=True, timeout=10,
-                                    )
-                                    await asyncio.sleep(2)  # Wait for server to come up
-                                except Exception:
-                                    pass
-
-                            _test_fix_iteration += 1
-                            yield sse_event("test_phase", {
-                                "status": "planning",
-                                "iteration": _test_fix_iteration,
-                            })
-
-                            # Build context from what the agent just did
-                            _test_context = (
-                                f"Task: {msg}\n"
-                                f"Agent response: {parsed['content'][:1000]}\n"
-                                f"Test iteration: {_test_fix_iteration}"
-                            )
-                            source_batch = await asyncio.to_thread(
-                                load_source_batch, "platform"
-                            )
-
-                            # Test against branch (10101) for platform, else prod
-                            _test_port = 10101 if project_path.resolve() == _BRANCH_ROOT.resolve() else 10100
-                            plan = await plan_tests(
-                                scope=msg,
-                                context=_test_context,
-                                source_batch=source_batch,
-                                target_port=_test_port,
-                            )
-
-                            if not plan.get("error"):
-                                tc_count = len(plan.get("test_cases", []))
-                                yield sse_event("test_phase", {
-                                    "status": "running",
-                                    "test_count": tc_count,
-                                    "iteration": _test_fix_iteration,
-                                })
-
-                                results = await run_tests(plan, target_port=_test_port)
-                                passed = sum(1 for r in results if r.get("status") == "pass")
-                                failed = [r for r in results if r.get("status") in ("fail", "error")]
-
-                                _test_evidence.append({
-                                    "iteration": _test_fix_iteration,
-                                    "plan_summary": plan.get("summary", ""),
-                                    "total": len(results),
-                                    "passed": passed,
-                                    "failed": len(failed),
-                                    "details": results,
-                                })
-
-                                if failed:
-                                    failure_msg = format_failures_as_message(results, plan)
-                                    yield sse_event("test_feedback", {
-                                        "status": "failures_found",
-                                        "passed": passed,
-                                        "failed": len(failed),
-                                        "iteration": _test_fix_iteration,
-                                    })
-                                    # Inject failures into same conversation —
-                                    # LLM keeps all previous file reads + context
-                                    messages.append({"role": "assistant", "content": parsed["content"]})
-                                    messages.append({"role": "user", "content": failure_msg})
-                                    action_turns = 0  # Reset turns for fix attempt
-                                    continue  # Back to while loop
-                                else:
-                                    yield sse_event("test_phase", {
-                                        "status": "all_passed",
-                                        "passed": passed,
-                                        "iteration": _test_fix_iteration,
-                                    })
-                        except Exception as _te:
-                            import logging as _tlog
-                            _tlog.getLogger("uvicorn").error(f"[test-phase] Error: {_te}")
-                            yield sse_event("test_phase", {
-                                "status": "error",
-                                "error": str(_te)[:200],
-                            })
-                    # ── END TEST PHASE ──────────────────────────────
-
                     break
 
                 if parsed["content"] and parsed["content"].strip():
@@ -1146,12 +1049,143 @@ async def direct_stream(message: str, project_dir: str):
                 if not all_readonly:
                     action_turns += 1
 
-            # Extract final response text for TD review
-            _final_response = ""
-            for _m in reversed(messages):
-                if _m.get("role") == "assistant" and _m.get("content", "").strip():
-                    _final_response = _m["content"]
+            # ── TEST PHASE (runs after agent loop, regardless of how it ended) ──
+            # If agent made code changes: restart branch, run tests, feed failures back.
+            # Uses its own loop so fix cycles re-enter the agent loop above.
+            while (_made_code_changes and _test_fix_iteration < _max_test_fix):
+                try:
+                    from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
+
+                    # Restart branch so tests hit the new code
+                    if project_path.resolve() == _BRANCH_ROOT.resolve():
+                        import subprocess as _test_sp
+                        yield sse_event("test_phase", {"status": "deploying_branch"})
+                        try:
+                            _test_sp.run(
+                                ["systemctl", "--user", "restart", "aelidirect-branch.service"],
+                                check=True, timeout=10,
+                            )
+                            await asyncio.sleep(2)
+                        except Exception:
+                            pass
+
+                    _test_fix_iteration += 1
+                    yield sse_event("test_phase", {
+                        "status": "planning", "iteration": _test_fix_iteration,
+                    })
+
+                    _test_context = (
+                        f"Task: {msg}\n"
+                        f"Agent response: {_last_response_text[:1000]}\n"
+                        f"Test iteration: {_test_fix_iteration}"
+                    )
+                    source_batch = await asyncio.to_thread(load_source_batch, "platform")
+                    _test_port = 10101 if project_path.resolve() == _BRANCH_ROOT.resolve() else 10100
+                    plan = await plan_tests(
+                        scope=msg, context=_test_context,
+                        source_batch=source_batch, target_port=_test_port,
+                    )
+
+                    if plan.get("error"):
+                        yield sse_event("test_phase", {"status": "error", "error": plan.get("error", "")[:200]})
+                        break
+
+                    tc_count = len(plan.get("test_cases", []))
+                    yield sse_event("test_phase", {
+                        "status": "running", "test_count": tc_count,
+                        "iteration": _test_fix_iteration,
+                    })
+
+                    results = await run_tests(plan, target_port=_test_port)
+                    passed = sum(1 for r in results if r.get("status") == "pass")
+                    failed = [r for r in results if r.get("status") in ("fail", "error")]
+
+                    _test_evidence.append({
+                        "iteration": _test_fix_iteration,
+                        "plan_summary": plan.get("summary", ""),
+                        "total": len(results), "passed": passed, "failed": len(failed),
+                        "details": results,
+                    })
+
+                    if not failed:
+                        yield sse_event("test_phase", {
+                            "status": "all_passed", "passed": passed,
+                            "iteration": _test_fix_iteration,
+                        })
+                        break  # Tests passed, exit test loop
+
+                    # Tests failed — feed failures back to agent
+                    failure_msg = format_failures_as_message(results, plan)
+                    yield sse_event("test_feedback", {
+                        "status": "failures_found", "passed": passed,
+                        "failed": len(failed), "iteration": _test_fix_iteration,
+                    })
+                    # Inject into same conversation (all prior context preserved)
+                    if _last_response_text:
+                        messages.append({"role": "assistant", "content": _last_response_text})
+                    messages.append({"role": "user", "content": failure_msg})
+                    action_turns = 0  # Reset turns
+
+                    # Re-enter agent loop for fix attempt
+                    _last_response_text = ""
+                    while action_turns < max_turns:
+                        total_turns += 1
+                        yield sse_event("turn", {"turn": total_turns, "action_turns": action_turns, "max": max_turns})
+                        raw = await asyncio.to_thread(
+                            call_llm, selected, prov["api_key"], prov["base_url"],
+                            prov["model"], messages, DIRECT_TOOL_DEFS, 0.3,
+                        )
+                        parsed = extract_response(raw)
+
+                        if parsed["type"] == "text":
+                            _last_response_text = parsed["content"]
+                            yield sse_event("response", {"content": parsed["content"]})
+                            break
+
+                        if parsed["content"] and parsed["content"].strip():
+                            yield sse_event("thinking", {"content": parsed["content"].strip()})
+
+                        assistant_msg = {"role": "assistant", "content": parsed["content"] or ""}
+                        assistant_msg["tool_calls"] = [
+                            {"id": tc["id"], "type": "function",
+                             "function": {"name": tc["function_name"], "arguments": json.dumps(tc["arguments"])}}
+                            for tc in parsed["tool_calls"]
+                        ]
+                        messages.append(assistant_msg)
+                        all_readonly = all(_is_readonly_tool_call(tc) for tc in parsed["tool_calls"])
+
+                        for tc in parsed["tool_calls"]:
+                            name = tc["function_name"]
+                            args = tc["arguments"]
+                            yield sse_event("tool_call", {"name": name, "args": args})
+                            try:
+                                result = execute_tool(name, args, project_dir=project_path)
+                            except Exception as e:
+                                result = f"Tool error in {name}: {e}"
+                            yield sse_event("tool_result", {"name": name, "result": result[:2000]})
+                            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                            _used_any_tools = True
+
+                        if not all_readonly:
+                            action_turns += 1
+
+                    # After fix attempt, loop back to test again
+                    continue
+
+                except Exception as _te:
+                    import logging as _tlog
+                    _tlog.getLogger("uvicorn").error(f"[test-phase] Error: {_te}")
+                    yield sse_event("test_phase", {"status": "error", "error": str(_te)[:200]})
                     break
+            # ── END TEST PHASE ──────────────────────────────────
+
+            # Extract final response text for TD review
+            _final_response = _last_response_text
+            if not _final_response:
+                for _m in reversed(messages):
+                    if _m.get("role") == "assistant" and _m.get("content", "").strip():
+                        _final_response = _m["content"]
+                        break
 
             # ── TD REVIEW (runs for every conversation that used tools) ──
             _td_review_text = None

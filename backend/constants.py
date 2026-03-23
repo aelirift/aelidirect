@@ -72,7 +72,7 @@ PLATFORM_DATA_FILES = [
 
 # ── Agent limits ─────────────────────────────────────────────────────
 MAX_ACTION_TURNS = 150
-MAX_TEST_FIX_ITERATIONS = 3
+MAX_TEST_FIX_ITERATIONS = 2
 
 # ── Conversation history ─────────────────────────────────────────────
 CONVERSATION_HISTORY_LIMIT = 50   # Max conversations kept per project

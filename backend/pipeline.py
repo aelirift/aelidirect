@@ -366,9 +366,9 @@ async def direct_stream(message: str, project_dir: str):
                     action_turns += 1
 
             # ── TEST PHASE (runs after agent loop, regardless of how it ended) ──
-            # If agent made code changes: restart branch, run tests, feed failures back.
-            # On failure, injects test results as user message and RE-ENTERS the same
-            # main agent loop above (no duplicate loop — one pipeline).
+            # Plan tests ONCE. Re-run same plan on retries (don't re-plan).
+            # On failure, include original task + failures → re-enter main agent loop.
+            _test_plan = None  # Planned once, reused on retries
             while (_made_code_changes and _test_fix_iteration < _max_test_fix):
                 try:
                     from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
@@ -390,44 +390,45 @@ async def direct_stream(message: str, project_dir: str):
                             pass
 
                     _test_fix_iteration += 1
-                    yield sse_event("test_phase", {
-                        "status": "planning", "iteration": _test_fix_iteration,
-                    })
-
-                    _test_context = (
-                        f"Task: {msg}\n"
-                        f"Agent response: {_last_response_text[:1000]}\n"
-                        f"Test iteration: {_test_fix_iteration}"
-                    )
-                    source_batch = await asyncio.to_thread(load_source_batch, "platform")
                     _test_port = BRANCH_PORT if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_PORT
-                    plan = await plan_tests(
-                        scope=msg, context=_test_context,
-                        source_batch=source_batch, target_port=_test_port,
-                    )
 
-                    if plan.get("error"):
-                        yield sse_event("test_phase", {"status": "error", "error": plan.get("error", "")[:200]})
-                        break
+                    # Plan tests ONCE on first iteration, reuse on retries
+                    if _test_plan is None:
+                        yield sse_event("test_phase", {
+                            "status": "planning", "iteration": _test_fix_iteration,
+                        })
+                        _test_context = (
+                            f"Task: {msg}\n"
+                            f"Agent response: {_last_response_text[:1000]}\n"
+                            f"IMPORTANT: Only test the specific feature requested. "
+                            f"Do NOT test unrelated platform features."
+                        )
+                        source_batch = await asyncio.to_thread(load_source_batch, "platform")
+                        _test_plan = await plan_tests(
+                            scope=msg, context=_test_context,
+                            source_batch=source_batch, target_port=_test_port,
+                        )
+                        if _test_plan.get("error"):
+                            yield sse_event("test_phase", {"status": "error", "error": _test_plan.get("error", "")[:200]})
+                            break
 
-                    tc_count = len(plan.get("test_cases", []))
-                    # Send plan details so frontend can display them
+                    tc_count = len(_test_plan.get("test_cases", []))
                     plan_details = [{"id": tc.get("id", "?"), "name": tc.get("name", ""), "type": tc.get("type", "")}
-                                    for tc in plan.get("test_cases", [])]
+                                    for tc in _test_plan.get("test_cases", [])]
                     yield sse_event("test_phase", {
                         "status": "running", "test_count": tc_count,
                         "iteration": _test_fix_iteration,
-                        "plan_summary": plan.get("summary", ""),
+                        "plan_summary": _test_plan.get("summary", ""),
                         "tests": plan_details,
                     })
 
-                    results = await run_tests(plan, target_port=_test_port)
+                    results = await run_tests(_test_plan, target_port=_test_port)
                     passed = sum(1 for r in results if r.get("status") == "pass")
                     failed = [r for r in results if r.get("status") in ("fail", "error")]
 
                     _test_evidence.append({
                         "iteration": _test_fix_iteration,
-                        "plan_summary": plan.get("summary", ""),
+                        "plan_summary": _test_plan.get("summary", ""),
                         "total": len(results), "passed": passed, "failed": len(failed),
                         "details": results,
                     })
@@ -460,8 +461,15 @@ async def direct_stream(message: str, project_dir: str):
                         "results": _results_summary,
                     })
 
-                    # Inject failures into same conversation, re-enter MAIN loop
-                    failure_msg = format_failures_as_message(results, plan)
+                    # Inject failures + original task into conversation, re-enter MAIN loop
+                    failure_msg = format_failures_as_message(results, _test_plan)
+                    # Remind agent of original task so it doesn't drift into fixing test infra
+                    failure_msg = (
+                        f"ORIGINAL TASK: {msg}\n\n"
+                        f"Fix ONLY the failures related to the original task. "
+                        f"Do NOT add new endpoints or modify test infrastructure.\n\n"
+                        + failure_msg
+                    )
                     if _last_response_text:
                         messages.append({"role": "assistant", "content": _last_response_text})
                     messages.append({"role": "user", "content": failure_msg})
@@ -656,7 +664,12 @@ async def direct_stream(message: str, project_dir: str):
             if _used_any_tools:
                 try:
                     yield sse_event("td_review", {"status": "running"})
-                    _review_input = f"Task: {msg}\n\nAgent Result:\n{_final_response[:8000]}"
+                    # Build full arc summary for TD: original task → plan → what was coded → test results
+                    _review_input = f"## Original Task\n{msg}\n\n"
+                    if _plan_text:
+                        _review_input += f"## Agent Plan\n{_plan_text[:2000]}\n\n"
+                    _review_input += f"## Agent Final Response\n{_final_response[:4000]}\n\n"
+                    _review_input += f"## Test Fix Iterations: {_test_fix_iteration}\n"
                     if _test_evidence:
                         _review_input += "\n\n## Automated Test Results\n"
                         for _te in _test_evidence:

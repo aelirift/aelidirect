@@ -207,17 +207,45 @@ Test against port {target_port} (http://127.0.0.1:{target_port})
     parsed = extract_response(raw)
     content = parsed.get("content", "")
 
-    # Extract JSON from response (may be wrapped in markdown code block)
+    # Extract JSON from response — handle markdown blocks, preamble, truncation
     json_str = content
     if "```json" in content:
         json_str = content.split("```json")[1].split("```")[0]
     elif "```" in content:
         json_str = content.split("```")[1].split("```")[0]
 
-    try:
-        plan = json.loads(json_str.strip())
-    except json.JSONDecodeError:
+    # Try parsing as-is
+    plan = None
+    for attempt in [json_str.strip(), content.strip()]:
+        try:
+            plan = json.loads(attempt)
+            break
+        except json.JSONDecodeError:
+            continue
+
+    # Try finding JSON object in the text (handles preamble text before JSON)
+    if plan is None:
+        import re
+        match = re.search(r'\{[\s\S]*"test_cases"[\s\S]*\}', content)
+        if match:
+            try:
+                plan = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                # Try fixing truncated JSON — add closing brackets
+                truncated = match.group(0)
+                for fix in ['}]}', '"}]}', '"}}]}']:
+                    try:
+                        plan = json.loads(truncated + fix)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+
+    if plan is None:
         plan = {"error": "Failed to parse test plan", "raw": content[:2000]}
+
+    # Validate plan has test_cases
+    if "test_cases" not in plan:
+        plan = {"error": "Test plan missing test_cases", "raw": json.dumps(plan)[:2000]}
 
     return plan
 

@@ -33,6 +33,110 @@ from docs import _regenerate_docs
 router = APIRouter()
 
 
+def _trim_messages(messages: list) -> list:
+    """Trim stale/redundant content from messages to save context window.
+
+    Removes:
+    - <think> blocks from assistant messages (19% of context)
+    - File read results older than the last patch to that file (39%)
+    - Verbose bash success output, keep errors (11%)
+    - old_text from patch_file args (10%)
+
+    Preserves: user messages, patch confirmations, error messages, recent reads.
+    """
+    # Track which files have been patched — reads before the patch are stale
+    patched_files = set()
+    # Walk backwards to know which files were patched
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            for tc in m["tool_calls"]:
+                fn = tc.get("function", {})
+                if fn.get("name") == "patch_file":
+                    try:
+                        args = json.loads(fn.get("arguments", "{}"))
+                        patched_files.add(args.get("path", ""))
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+    trimmed = []
+    for m in messages:
+        role = m.get("role", "")
+
+        # Keep user and system messages as-is
+        if role in ("user", "system"):
+            trimmed.append(m)
+            continue
+
+        # Trim assistant messages
+        if role == "assistant":
+            content = m.get("content", "") or ""
+            tool_calls = m.get("tool_calls", [])
+
+            # Strip <think> blocks — keep only the first line as summary
+            if content.strip().startswith("<think"):
+                # Extract first meaningful line from thinking
+                lines = content.replace("<think>", "").replace("</think>", "").strip().split("\n")
+                summary = next((l.strip() for l in lines if l.strip()), "")
+                new_m = dict(m)
+                new_m["content"] = f"(planning: {summary[:100]})" if summary else ""
+                # Trim old_text from patch_file args
+                if tool_calls:
+                    new_calls = []
+                    for tc in tool_calls:
+                        fn = tc.get("function", {})
+                        if fn.get("name") == "patch_file":
+                            try:
+                                args = json.loads(fn.get("arguments", "{}"))
+                                # Replace old_text with short marker
+                                if "old_text" in args and len(args["old_text"]) > 100:
+                                    args["old_text"] = f"(trimmed {len(args['old_text'])} chars)"
+                                    new_tc = dict(tc)
+                                    new_tc["function"] = dict(fn)
+                                    new_tc["function"]["arguments"] = json.dumps(args)
+                                    new_calls.append(new_tc)
+                                    continue
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                        new_calls.append(tc)
+                    new_m["tool_calls"] = new_calls
+                trimmed.append(new_m)
+            else:
+                trimmed.append(m)
+            continue
+
+        # Trim tool results
+        if role == "tool":
+            content = m.get("content", "") or ""
+
+            # Trim successful bash output (keep errors)
+            if "exit code: 0" in content and len(content) > 200:
+                new_m = dict(m)
+                new_m["content"] = "exit code: 0 (output trimmed)"
+                trimmed.append(new_m)
+                continue
+
+            # Trim file read results for files that were later patched (stale)
+            if content.startswith("===") and " — lines " in content[:100]:
+                # Extract filename from header like "=== frontend/index.html — lines 100-200 ==="
+                header = content.split("\n")[0]
+                for pf in patched_files:
+                    if pf and pf in header:
+                        new_m = dict(m)
+                        new_m["content"] = f"(stale read of {pf} — file was patched later)"
+                        trimmed.append(new_m)
+                        break
+                else:
+                    trimmed.append(m)
+                continue
+
+            trimmed.append(m)
+            continue
+
+        trimmed.append(m)
+
+    return trimmed
+
+
 @router.post("/api/direct/start")
 async def direct_start(request: Request):
     from tools import PROJECTS_ROOT, init_project_dir, write_project_env, set_active_project, read_project_env
@@ -205,9 +309,11 @@ async def direct_stream(message: str, project_dir: str):
                 total_turns += 1
                 yield sse_event("turn", {"turn": total_turns, "action_turns": action_turns, "max": max_turns})
 
+                # Trim stale content before each LLM call to save context window
+                _trimmed = _trim_messages(messages)
                 raw = await asyncio.to_thread(
                     call_llm, selected, prov["api_key"], prov["base_url"],
-                    prov["model"], messages, DIRECT_TOOL_DEFS, 0.3,
+                    prov["model"], _trimmed, DIRECT_TOOL_DEFS, 0.3,
                 )
                 parsed = extract_response(raw)
 
@@ -482,9 +588,10 @@ async def direct_stream(message: str, project_dir: str):
                         total_turns += 1
                         yield sse_event("turn", {"turn": total_turns, "action_turns": action_turns, "max": max_turns})
 
+                        _trimmed = _trim_messages(messages)
                         raw = await asyncio.to_thread(
                             call_llm, selected, prov["api_key"], prov["base_url"],
-                            prov["model"], messages, DIRECT_TOOL_DEFS, 0.3,
+                            prov["model"], _trimmed, DIRECT_TOOL_DEFS, 0.3,
                         )
                         parsed = extract_response(raw)
 

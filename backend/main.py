@@ -800,7 +800,7 @@ async def direct_start(request: Request):
 
 
 @app.get("/api/direct/stream")
-async def direct_stream(message: str, project_dir: str, auto_test: bool = False):
+async def direct_stream(message: str, project_dir: str):
     from tools import PROJECTS_ROOT, set_active_project, read_project_env, file_cache_wipe_branch
 
     project_path = PROJECTS_ROOT / project_dir
@@ -878,6 +878,7 @@ async def direct_stream(message: str, project_dir: str, auto_test: bool = False)
         max_turns = 80
         total_turns = 0
         _made_code_changes = False  # Track if agent wrote/edited files
+        _used_any_tools = False     # Track if agent called any tools at all
         _test_fix_iteration = 0
         _max_test_fix = 3
         _test_evidence = []  # Collected for TD review
@@ -897,10 +898,10 @@ async def direct_stream(message: str, project_dir: str, auto_test: bool = False)
                     yield sse_event("response", {"content": parsed["content"]})
 
                     # ── TEST PHASE ──────────────────────────────────
-                    # If auto_test enabled, agent made changes, and we have iterations left:
+                    # If agent made code changes and we have iterations left:
                     # run test agent, and if failures found, inject them back as user message
                     # with full context preserved and turn count reset.
-                    if (auto_test and _made_code_changes
+                    if (_made_code_changes
                             and _test_fix_iteration < _max_test_fix):
                         try:
                             from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
@@ -1119,6 +1120,7 @@ async def direct_stream(message: str, project_dir: str, auto_test: bool = False)
                     yield sse_event("tool_result", {"name": name, "result": result[:2000]})
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
+                    _used_any_tools = True
                     # Track if agent made code changes (for auto-test trigger)
                     if name in ("edit_file", "patch_file") and not result.startswith("ERROR"):
                         _made_code_changes = True
@@ -1126,10 +1128,59 @@ async def direct_stream(message: str, project_dir: str, auto_test: bool = False)
                 if not all_readonly:
                     action_turns += 1
 
+            # Extract final response text for TD review
+            _final_response = ""
+            for _m in reversed(messages):
+                if _m.get("role") == "assistant" and _m.get("content", "").strip():
+                    _final_response = _m["content"]
+                    break
+
+            # ── TD REVIEW (runs for every conversation that used tools) ──
+            _td_review_text = None
+            if _used_any_tools:
+                try:
+                    yield sse_event("td_review", {"status": "running"})
+                    _review_input = f"Task: {msg}\n\nAgent Result:\n{_final_response[:8000]}"
+                    if _test_evidence:
+                        _review_input += "\n\n## Automated Test Results\n"
+                        for _te in _test_evidence:
+                            _review_input += (
+                                f"\n### Test Iteration {_te.get('iteration', '?')}\n"
+                                f"Plan: {_te.get('plan_summary', 'N/A')}\n"
+                                f"Total: {_te.get('total', 0)}, Passed: {_te.get('passed', 0)}, "
+                                f"Failed: {_te.get('failed', 0)}\n"
+                            )
+                            for _d in _te.get("details", []):
+                                _status = _d.get("status", "?")
+                                _review_input += f"- [{_status.upper()}] {_d.get('id', '?')}: {_d.get('name', '')}\n"
+                                if _status != "pass":
+                                    for _det in _d.get("details", []):
+                                        if _det.get("assertion_failed"):
+                                            _review_input += f"    FAIL: {_det['assertion_failed'][:200]}\n"
+                        _review_input = _review_input[:12000]
+
+                    _review_raw = await asyncio.to_thread(
+                        call_llm, selected, prov["api_key"], prov["base_url"],
+                        prov["model"], [
+                            {"role": "system", "content": TODO_TD_REVIEW_PROMPT},
+                            {"role": "user", "content": _review_input},
+                        ], None, 0.3,
+                    )
+                    _td_review_text = extract_response(_review_raw)["content"]
+                    yield sse_event("td_review", {
+                        "status": "complete",
+                        "review": _td_review_text,
+                    })
+                except Exception as _tde:
+                    import logging as _tdlog
+                    _tdlog.getLogger("uvicorn").error(f"[td-review] Pipeline error: {_tde}")
+                    yield sse_event("td_review", {"status": "error", "error": str(_tde)[:200]})
+
             yield sse_event("done", {
                 "turns": total_turns,
                 "action_turns": action_turns,
                 "test_evidence": _test_evidence if _test_evidence else None,
+                "td_review": _td_review_text[:500] if _td_review_text else None,
             })
             try:
                 _save_conversation(project_dir, msg, messages, test_evidence=_test_evidence)
@@ -1346,7 +1397,6 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
     update_direct_todo(project_dir, todo_id, "attempted")
     result_text = ""
     total_steps = 0
-    _captured_test_evidence = []
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
@@ -1360,9 +1410,6 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
                 raise Exception(start_data["error"])
 
             stream_url = start_data["stream_url"]
-            # Enable auto-test so the agent loop verifies its own work
-            sep = "&" if "?" in stream_url else "?"
-            stream_url = f"{stream_url}{sep}auto_test=true"
 
             # Step 2: Consume SSE stream (same as browser EventSource)
             async with client.stream("GET", f"{base_url}{stream_url}") as stream:
@@ -1432,13 +1479,19 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
                                 "step": f"test: {failed} failures, fixing (iter {iteration})",
                                 "turn": 0,  # Turns reset for fix attempt
                             })
+                        elif event_type == "td_review":
+                            status = d.get("status", "")
+                            if status == "running":
+                                _heartbeat_progress.update({"step": "TD review running"})
+                            elif status == "complete":
+                                _heartbeat_progress.update({"step": "TD review complete"})
                         elif event_type == "done":
-                            _captured_test_evidence = d.get("test_evidence") or []
                             break
                         elif event_type == "error":
                             raise Exception(d.get("message", "Stream error"))
 
-        # Success
+        # Success — only heartbeat bookkeeping here.
+        # TD review, tests, and docs regen already happened inside the pipeline.
         from direct_todo import _classify_result
         rs = _classify_result(result_text)
         _heartbeat_progress.update({
@@ -1448,12 +1501,6 @@ async def _execute_todo_via_chat(project_dir: str, todo_item: dict):
         })
         update_direct_todo(project_dir, todo_id, "done", result_text)
         record_heartbeat_run(project_dir, todo_id, task, result_text)
-        # TD review + docs regen in parallel (conversation already saved by the stream)
-        # Include test evidence so TD can assess actual verification quality
-        asyncio.create_task(_run_td_review_for_todo(
-            project_dir, todo_id, task, result_text, _captured_test_evidence
-        ))
-        asyncio.create_task(_regenerate_docs())
         _log.info(f"[heartbeat] {project_dir}: todo {todo_id} completed ({rs})")
 
     except Exception as e:
@@ -1592,57 +1639,6 @@ def _parse_td_verdict(review_text: str) -> str:
         return ""
     verdict = match.group(1).upper()
     return {"PASS": "success", "PARTIAL": "partial", "FAIL": "failure", "INCOMPLETE": "incomplete"}.get(verdict, "")
-
-
-async def _run_td_review_for_todo(project_dir: str, todo_id: str, task: str, result: str, test_evidence: list = None):
-    """Run a TD review for a single todo execution (background task).
-    The TD verdict becomes the authoritative result_status for the todo.
-    If test_evidence is provided, it's included so TD can assess actual verification."""
-    import logging
-    _log = logging.getLogger("uvicorn")
-    prov = _get_provider()
-    if not prov["api_key"]:
-        return
-    try:
-        selected = config["selected"]
-
-        # Build review input with test evidence when available
-        review_input = f"Task: {task}\n\nAgent Result:\n{result[:8000]}"
-        if test_evidence:
-            review_input += "\n\n## Automated Test Results\n"
-            for te in test_evidence:
-                review_input += (
-                    f"\n### Test Iteration {te.get('iteration', '?')}\n"
-                    f"Plan: {te.get('plan_summary', 'N/A')}\n"
-                    f"Total: {te.get('total', 0)}, Passed: {te.get('passed', 0)}, "
-                    f"Failed: {te.get('failed', 0)}\n"
-                )
-                for d in te.get("details", []):
-                    status = d.get("status", "?")
-                    name = d.get("name", "unnamed")
-                    review_input += f"- [{status.upper()}] {d.get('id', '?')}: {name}\n"
-                    if status != "pass":
-                        for det in d.get("details", []):
-                            if det.get("assertion_failed"):
-                                review_input += f"    FAIL: {det['assertion_failed'][:200]}\n"
-            review_input = review_input[:12000]  # Keep within token budget
-
-        review_result = await asyncio.to_thread(
-            call_llm, selected, prov["api_key"], prov["base_url"], prov["model"],
-            [
-                {"role": "system", "content": TODO_TD_REVIEW_PROMPT},
-                {"role": "user", "content": review_input},
-            ],
-            None, 0.3,
-        )
-        parsed = extract_response(review_result)
-        review_text = parsed["content"]
-        # Parse verdict and update todo with both review and authoritative status
-        td_status = _parse_td_verdict(review_text)
-        set_todo_review(project_dir, todo_id, review_text, td_status)
-        _log.info(f"[td-review] Completed review for todo {todo_id}: {td_status or 'no verdict parsed'}")
-    except Exception as e:
-        _log.error(f"[td-review] Failed for {todo_id}: {e}")
 
 
 # ── Auto-regenerate Context Map & Data Flow ───────────────────────────

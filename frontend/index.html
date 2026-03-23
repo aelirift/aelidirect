@@ -1676,6 +1676,9 @@ async function sendMessage() {
         '<div style="border-bottom:1px solid ' + color + '33; padding:4px 0; margin:8px 0 4px 0;">' +
         '<span style="color:' + color + '; font-weight:bold; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">' +
         label + '</span></div>', true);
+      // Update turn counter with phase
+      var tc = document.getElementById('turn-counter');
+      if (tc) tc.textContent = label + '...';
     });
 
     evtSource.addEventListener('test_phase', function(e) {

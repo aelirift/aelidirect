@@ -36,31 +36,50 @@ router = APIRouter()
 def _trim_messages(messages: list) -> list:
     """Trim stale/redundant content from messages to save context window.
 
-    Removes:
-    - <think> blocks from assistant messages (19% of context)
-    - File read results older than the last patch to that file (39%)
-    - Verbose bash success output, keep errors (11%)
+    Trims:
+    - <think> blocks → 1-line summary (19% savings)
+    - File reads that are FOLLOWED BY a patch to same file (order-aware) (39%)
+    - Bash output that is purely confirmatory — NOT search/grep results (11%)
     - old_text from patch_file args (10%)
 
-    Preserves: user messages, patch confirmations, error messages, recent reads.
+    Never trims: last 6 messages (LLM needs recent context), user messages, errors.
     """
-    # Track which files have been patched — reads before the patch are stale
-    patched_files = set()
-    # Walk backwards to know which files were patched
-    for m in reversed(messages):
+    if len(messages) <= 6:
+        return messages
+
+    # Build ordered list of patch positions per file
+    # patch_positions[file_path] = [index_of_first_patch, index_of_second_patch, ...]
+    patch_positions = {}
+    for i, m in enumerate(messages):
         if m.get("role") == "assistant" and m.get("tool_calls"):
             for tc in m["tool_calls"]:
                 fn = tc.get("function", {})
                 if fn.get("name") == "patch_file":
                     try:
                         args = json.loads(fn.get("arguments", "{}"))
-                        patched_files.add(args.get("path", ""))
+                        path = args.get("path", "")
+                        if path:
+                            patch_positions.setdefault(path, []).append(i)
                     except (json.JSONDecodeError, TypeError):
                         pass
 
+    # Bash commands that are purely confirmatory (output not useful after success)
+    _CONFIRMATORY_BASH = (
+        "python3 -m py_compile", "git add", "git commit", "mkdir", "cd ",
+        "systemctl", "pip install", "npm install",
+    )
+
+    # Never trim last 6 messages — LLM needs its most recent context
+    protect_from = len(messages) - 6
+
     trimmed = []
-    for m in messages:
+    for i, m in enumerate(messages):
         role = m.get("role", "")
+
+        # Never trim protected recent messages
+        if i >= protect_from:
+            trimmed.append(m)
+            continue
 
         # Keep user and system messages as-is
         if role in ("user", "system"):
@@ -72,9 +91,8 @@ def _trim_messages(messages: list) -> list:
             content = m.get("content", "") or ""
             tool_calls = m.get("tool_calls", [])
 
-            # Strip <think> blocks — keep only the first line as summary
+            # Strip <think> blocks → first line summary
             if content.strip().startswith("<think"):
-                # Extract first meaningful line from thinking
                 lines = content.replace("<think>", "").replace("</think>", "").strip().split("\n")
                 summary = next((l.strip() for l in lines if l.strip()), "")
                 new_m = dict(m)
@@ -87,7 +105,6 @@ def _trim_messages(messages: list) -> list:
                         if fn.get("name") == "patch_file":
                             try:
                                 args = json.loads(fn.get("arguments", "{}"))
-                                # Replace old_text with short marker
                                 if "old_text" in args and len(args["old_text"]) > 100:
                                     args["old_text"] = f"(trimmed {len(args['old_text'])} chars)"
                                     new_tc = dict(tc)
@@ -108,26 +125,43 @@ def _trim_messages(messages: list) -> list:
         if role == "tool":
             content = m.get("content", "") or ""
 
-            # Trim successful bash output (keep errors)
+            # Trim confirmatory bash success (NOT grep/search/informational output)
             if "exit code: 0" in content and len(content) > 200:
-                new_m = dict(m)
-                new_m["content"] = "exit code: 0 (output trimmed)"
-                trimmed.append(new_m)
-                continue
+                # Check if the bash command was confirmatory
+                # Look at the preceding assistant message for the command
+                prev = messages[i - 1] if i > 0 else {}
+                is_confirmatory = False
+                if prev.get("tool_calls"):
+                    for tc in prev["tool_calls"]:
+                        fn = tc.get("function", {})
+                        if fn.get("name") == "bash":
+                            try:
+                                cmd = json.loads(fn.get("arguments", "{}")).get("command", "")
+                                if any(cmd.strip().startswith(p) for p in _CONFIRMATORY_BASH):
+                                    is_confirmatory = True
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                if is_confirmatory:
+                    new_m = dict(m)
+                    new_m["content"] = "exit code: 0 (confirmatory output trimmed)"
+                    trimmed.append(new_m)
+                    continue
 
-            # Trim file read results for files that were later patched (stale)
+            # Trim file reads ONLY if a patch to that file came AFTER this read
             if content.startswith("===") and " — lines " in content[:100]:
-                # Extract filename from header like "=== frontend/index.html — lines 100-200 ==="
                 header = content.split("\n")[0]
-                for pf in patched_files:
+                stale = False
+                for pf, positions in patch_positions.items():
                     if pf and pf in header:
-                        new_m = dict(m)
-                        new_m["content"] = f"(stale read of {pf} — file was patched later)"
-                        trimmed.append(new_m)
-                        break
-                else:
-                    trimmed.append(m)
-                continue
+                        # Stale only if ANY patch to this file is at a LATER index
+                        if any(p > i for p in positions):
+                            stale = True
+                            break
+                if stale:
+                    new_m = dict(m)
+                    new_m["content"] = f"(stale read — file patched later)"
+                    trimmed.append(new_m)
+                    continue
 
             trimmed.append(m)
             continue

@@ -133,77 +133,33 @@ _heartbeat_progress = {
 # ── Direct Agent Prompt ───────────────────────────────────────────────
 DIRECT_AGENT_PROMPT = (
     "You are a full-stack developer with full system access.\n\n"
-    "TOOLS:\n"
-    "File ops: list_files, read_file, read_lines, read_file_tail, grep_code, "
-    "read_project, edit_file (new files), patch_file (existing files)\n"
-    "System: bash(command) — run ANY shell command (python3, git, curl, pip, ls, cat, grep, tests, etc.)\n"
-    "Deploy: deploy_pod() — build and deploy to a live pod\n"
-    "Test: http_check(path) — test live endpoints\n"
-    "Git: git_status(), git_diff(), git_log(n), git_commit(message)\n"
-    "Long-term memory: memory_save(key, content), memory_load(key), memory_list()\n\n"
-    "APPROACH — match depth to the task:\n"
-    "For DIAGNOSTIC tasks ('what's wrong', 'why is X broken', 'find bugs', 'review'):\n"
-    "  1. Call read_project() first — it reads all code in one call if the project fits,\n"
-    "     or returns a file listing with sizes if too large (then read key files individually)\n"
-    "  2. LIST ALL issues found — enumerate every bug, every problem, miss nothing\n"
-    "  3. Be skeptical — don't rationalize code as 'intentional' without evidence\n"
-    "  4. Only THEN plan and apply fixes\n"
-    "  5. After fixing, verify each fix specifically, not just HTTP 200\n"
-    "For CLEAR tasks ('change X to Y', 'add feature Z', 'deploy'):\n"
-    "  1. Read the relevant code (SPEC.md, target files — or read_project() if small)\n"
-    "  2. Plan briefly\n"
-    "  3. Code the change\n"
-    "  4. Verify and deploy\n"
-    "For LARGE PROJECTS (when read_project says 'too large'):\n"
-    "  1. Read the file listing from read_project to understand structure\n"
-    "  2. Read SPEC.md, CONTEXT_MAP.md, and entry points first\n"
-    "  3. Use grep_code to find patterns related to the task\n"
-    "  4. Read specific files that are relevant\n"
-    "  5. Don't try to read everything — focus on what the task needs\n\n"
-    "TOOL PREFERENCES — use the right tool for the job:\n"
-    "- ALWAYS use read_file or read_project to read files — NEVER bash('cat ...') or bash('head ...')\n"
-    "- ALWAYS use patch_file to edit existing files — NEVER bash('sed ...') or bash('echo ... > ...')\n"
-    "- ALWAYS use grep_code to search project files — NEVER bash('grep ...')\n"
-    "- Use bash ONLY for: running commands (python3, pip, curl, git), checking processes, installing packages\n"
-    "- Read-only tools (read_file, grep_code, list_files, read_project) are FREE — no turn cost. Use them generously.\n\n"
+    "EFFICIENCY — work like a human dev, not a search engine:\n"
+    "- You have SITE_MAP.md below — it shows every file, function, and what they do.\n"
+    "- DO NOT call read_project(). DO NOT grep for things in the site map. Go straight to the code.\n"
+    "- For a clear task: read_lines on the specific function → patch_file → done.\n"
+    "- For diagnostics: read_lines on the relevant sections → list all issues → fix.\n"
+    "- When you need multiple reads, request them ALL in one turn (parallel tool calls).\n"
+    "- Be concise in your reasoning. Plan once, then execute. Don't re-analyze after every step.\n"
+    "- patch_file uses TEXT MATCHING, not line numbers. Line numbers in the site map may shift after edits.\n\n"
     "CODING RULES:\n"
     "- patch_file for existing files, edit_file ONLY for new files\n"
     "- Keep files under 400 lines — split by concern\n"
     "- App must listen on 0.0.0.0:8000 with /health endpoint\n"
-    "- Don't break existing features (read SPEC.md)\n"
+    "- Don't break existing features\n"
     "- Git: git_commit after successful changes\n\n"
-    "PORTS — know what runs where:\n"
-    "- Port 10100: production aelidirect (DO NOT deploy here)\n"
-    "- Port 10101: branch/testing aelidirect (restart_platform restarts this)\n"
-    "- Ports 11001-11099: project pods (deploy_pod assigns these)\n"
-    "- ALWAYS read project_env.md to check the assigned pod_port — NEVER guess ports\n"
-    "- After deploy_pod, the URL is http://{pod_host}:{pod_port} — read it from the deploy result\n\n"
-    "PLATFORM EDITING (when working on the 'aelidirect_platform' project):\n"
-    "- The platform files are in backend/ and frontend/\n"
-    "- After editing ANY platform file, you MUST call restart_platform() — this restarts the BRANCH on 10101\n"
-    "- Test your changes on port 10101 before promoting to prod\n"
-    "- Always syntax-check Python files before restarting: bash('python3 -m py_compile backend/main.py')\n"
-    "- If restart fails, check the error and fix — prod (10100) is NOT affected\n\n"
-    "VERIFICATION:\n"
-    "- bash('python3 -m py_compile file.py') to syntax check\n"
-    "- deploy_pod() then http_check to verify (for regular projects)\n"
-    "- restart_platform() then http_check on port 10101 (for platform edits)\n"
-    "- For bug fixes: verify each specific bug is resolved, not just that the server responds\n"
-    "- Read the patched code back to confirm the fix is correct\n\n"
+    "PLATFORM EDITING (aelidirect_platform project):\n"
+    "- After editing ANY platform file: restart_platform() (restarts branch on 10101)\n"
+    "- Syntax-check first: bash('python3 -m py_compile backend/main.py')\n"
+    "- Prod (10100) is NOT affected — test on 10101\n\n"
+    "PORTS:\n"
+    "- 10100: production (DO NOT deploy here)\n"
+    "- 10101: branch/testing (restart_platform restarts this)\n"
+    "- 11001-11099: project pods (deploy_pod assigns these)\n"
+    "- Read project_env.md for assigned pod_port\n\n"
     "MEMORY:\n"
-    "You have two kinds of memory:\n"
-    "1. LONG-TERM MEMORY — loaded automatically every conversation (shown below if any exist). "
-    "Use memory_save to persist important facts across ALL future conversations. "
-    "ALWAYS save after making significant changes. Keep saves VERY compact — "
-    "one-liners preferred, e.g. 'token limit: 16k', 'fixed: keypress start game bug', "
-    "'arch: FastAPI+HTMX, port 11001'. Never save verbose explanations.\n"
-    "2. SHORT-TERM MEMORY — recent conversation history is loaded automatically. "
-    "You can see what was discussed and done in previous conversations. "
-    "This is managed by the system — no action needed from you.\n\n"
-    "At the END of every conversation, you MUST call memory_save to record what you did. "
-    "Key name format: 'log_YYYY-MM-DD_brief-slug' for session logs, or a descriptive key "
-    "for facts (e.g. 'architecture', 'known_bugs', 'config'). "
-    "Overwrite existing keys when the value changes rather than creating new ones."
+    "Long-term memory is loaded below. Save important facts with memory_save (compact one-liners).\n"
+    "At conversation END, call memory_save with key 'log_YYYY-MM-DD_brief-slug'.\n"
+    "Overwrite existing keys when values change.\n"
 )
 
 # ── State & storage dirs ──────────────────────────────────────────────
@@ -265,8 +221,11 @@ def _load_conversation_history(project_name: str, prov: dict = None, selected: s
             old_file.unlink()
         conv_files = conv_files[-CONVERSATION_HISTORY_LIMIT:]
 
+    # Load only last 5 conversations for system prompt (rest are archived on disk)
+    # This saves ~30-40k tokens of stale context per conversation
+    recent_files = conv_files[-5:]
     conversations = []
-    for f in conv_files:
+    for f in recent_files:
         try:
             conv = json.loads(f.read_text())
             conv["_path"] = str(f)
@@ -283,18 +242,12 @@ def _load_conversation_history(project_name: str, prov: dict = None, selected: s
         lines = [f"[{conv['timestamp']}] User: {conv.get('user_message', '?')}"]
         for m in (conv.get("messages") or []):
             if m.get("role") == "assistant" and m.get("content"):
-                lines.append(f"  Assistant: {m['content'][:800]}")
+                lines.append(f"  Assistant: {m['content'][:300]}")
             elif m.get("role") == "assistant" and m.get("tools"):
-                lines.append(f"  Tools: {', '.join(m['tools'][:8])}")
+                lines.append(f"  Tools: {', '.join(m['tools'][:5])}")
         return "\n".join(lines)
 
     total_text = "\n\n".join(_conv_to_text(c) for c in conversations)
-    total_tokens = _estimate_tokens(total_text)
-
-    if total_tokens > CONVERSATION_TOKEN_BUDGET and prov and prov.get("api_key"):
-        _summarize_old_conversations(conversations, prov, selected)
-        total_text = "\n\n".join(_conv_to_text(c) for c in conversations)
-
     return total_text
 
 
@@ -354,7 +307,12 @@ def _summarize_old_conversations(conversations: list, prov: dict, selected: str)
 
 
 # ── Tool definitions for direct mode ──────────────────────────────────
-DIRECT_TOOL_DEFS = TOOL_DEFINITIONS + [
+# Filter out exploration tools — agent has site_map, shouldn't need these.
+# Keep read_file, read_lines, patch_file, edit_file (still needed for targeted reads/edits).
+_SKIP_TOOLS = {"read_project", "grep_code", "list_files", "read_file_tail"}
+_FILTERED_TOOL_DEFS = [t for t in TOOL_DEFINITIONS if t["function"]["name"] not in _SKIP_TOOLS]
+
+DIRECT_TOOL_DEFS = _FILTERED_TOOL_DEFS + [
     {"type": "function", "function": {
         "name": "deploy_pod",
         "description": "Build and deploy the project as a live pod. Returns success/failure with details.",
@@ -837,6 +795,16 @@ async def direct_stream(message: str, project_dir: str):
     async def event_generator():
         system_prompt = DIRECT_AGENT_PROMPT
 
+        # Site map — agent's primary orientation (compact file/function tree)
+        site_map_path = PROD_ROOT / "SITE_MAP.md"
+        if site_map_path.exists():
+            system_prompt += "\n\n[SITE MAP]\n" + site_map_path.read_text()
+
+        # SPEC — what the project does
+        spec_path = PROD_ROOT / "SPEC.md"
+        if spec_path.exists():
+            system_prompt += "\n\n[PROJECT SPEC]\n" + spec_path.read_text()
+
         # Long-term memory
         mem_dir = MEMORY_DIR / project_path.name
         if mem_dir.exists():
@@ -846,11 +814,14 @@ async def direct_stream(message: str, project_dir: str):
             if memories:
                 system_prompt += "\n\n[LONG-TERM MEMORY]\n" + "\n".join(memories)
 
-        # Short-term memory
+        # Recent conversation history (trimmed to last 5 for efficiency)
         conv_history = await asyncio.to_thread(
             _load_conversation_history, project_path.name, prov, selected
         )
         if conv_history:
+            # Cap at ~10k tokens to leave room for actual work
+            if len(conv_history) > 40000:
+                conv_history = conv_history[-40000:]
             system_prompt += "\n\n[RECENT CONVERSATION HISTORY]\n" + conv_history
 
         messages = [
@@ -1740,6 +1711,7 @@ async def _regenerate_docs():
         PROD_ROOT / "backend/llm_client.py",
         PROD_ROOT / "backend/pod.py",
         PROD_ROOT / "backend/test_agent.py",
+        PROD_ROOT / "backend/constants.py",
         PROD_ROOT / "frontend/index.html",
     ]
 
@@ -1809,8 +1781,46 @@ async def _regenerate_docs():
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate SPEC.md: {e}")
 
-    # Run all three in parallel
-    await asyncio.gather(_gen_spec(), _gen_context_map(), _gen_data_flow())
+    async def _gen_site_map():
+        try:
+            result = await asyncio.to_thread(
+                call_llm, selected, prov["api_key"], prov["base_url"], prov["model"],
+                [
+                    {"role": "system", "content": (
+                        "You are a documentation generator. Given the source code below, "
+                        "produce a SITE_MAP.md — a compact file tree like an uncollapsed file explorer.\n\n"
+                        "Format:\n"
+                        "# Site Map\n"
+                        "## backend/\n"
+                        "### filename.py — one-line description\n"
+                        "  - function_name() — short description / tags\n"
+                        "  - another_func() — short description\n\n"
+                        "## frontend/\n"
+                        "### index.html — one-line description\n"
+                        "  - jsFunction() — short description\n\n"
+                        "## Root docs\n"
+                        "  - SPEC.md — description\n\n"
+                        "Rules:\n"
+                        "- List EVERY function/class in every file\n"
+                        "- Descriptions are keyword tags or 5-10 word phrases, not sentences\n"
+                        "- DO NOT include line numbers (they go stale after edits)\n"
+                        "- DO NOT include file contents, just names + descriptions\n"
+                        "- Group by directory, then by file\n"
+                        "- Include endpoints next to their handler functions\n"
+                        "Start with '# Site Map'."
+                    )},
+                    {"role": "user", "content": all_source},
+                ],
+                None, 0.3,
+            )
+            parsed = extract_response(result)
+            (PROD_ROOT / "SITE_MAP.md").write_text(parsed["content"])
+            _log.info("[docs] SITE_MAP.md regenerated")
+        except Exception as e:
+            _log.error(f"[docs] Failed to regenerate SITE_MAP.md: {e}")
+
+    # Run all four in parallel
+    await asyncio.gather(_gen_spec(), _gen_context_map(), _gen_data_flow(), _gen_site_map())
     _log.info("[docs] Documentation regeneration complete")
 
 

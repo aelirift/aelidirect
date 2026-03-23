@@ -615,8 +615,11 @@ def _tool_grep_code(project: Path, pattern: str) -> str:
     return f"Matches for '{pattern}':\n" + "\n".join(results)
 
 
+_READ_LINES_PADDING = 20  # Extra lines above/below to reduce follow-up reads
+
 def _tool_read_lines(project: Path, path: str, start = 1, end = 50) -> str:
-    """Read a specific range of lines from a file (1-indexed, inclusive)."""
+    """Read a specific range of lines from a file (1-indexed, inclusive).
+    Adds padding (±20 lines) to reduce follow-up read calls."""
     try:
         start = int(start)
         end = int(end)
@@ -634,16 +637,16 @@ def _tool_read_lines(project: Path, path: str, start = 1, end = 50) -> str:
     all_lines = target.read_text().splitlines()
     total = len(all_lines)
 
-    if start < 1:
-        start = 1
-    if end > total:
-        end = total
-    if start > total:
+    # Add padding to reduce "let me read a bit more" follow-ups
+    padded_start = max(1, start - _READ_LINES_PADDING)
+    padded_end = min(total, end + _READ_LINES_PADDING)
+
+    if padded_start > total:
         return f"File {path} has only {total} lines. Requested start={start}."
 
-    selected = all_lines[start - 1:end]
-    header = f"=== {path} — lines {start}-{end} of {total} ===\n"
-    numbered = "\n".join(f"{start + i:4d} | {line}" for i, line in enumerate(selected))
+    selected = all_lines[padded_start - 1:padded_end]
+    header = f"=== {path} — lines {padded_start}-{padded_end} of {total} (requested {start}-{end}, padded ±{_READ_LINES_PADDING}) ===\n"
+    numbered = "\n".join(f"{padded_start + i:4d} | {line}" for i, line in enumerate(selected))
     return header + numbered
 
 

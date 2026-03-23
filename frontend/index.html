@@ -1650,6 +1650,52 @@ async function sendMessage() {
         '</div>', true);
     });
 
+    evtSource.addEventListener('test_phase', function(e) {
+      const d = JSON.parse(e.data);
+      if (d.status === 'deploying_branch') {
+        showSpinner('Restarting branch for testing...');
+        addMsg('system', '<span style="color:#ffa500;">Restarting branch server before testing...</span>', true);
+      } else if (d.status === 'planning') {
+        showSpinner('Test agent planning (iter ' + d.iteration + ')...');
+        addMsg('system', '<span style="color:#ffa500;">Test agent: planning tests (iteration ' + d.iteration + ')</span>', true);
+      } else if (d.status === 'running') {
+        showSpinner('Running ' + d.test_count + ' tests...');
+        addMsg('system', '<span style="color:#ffa500;">Test agent: running ' + d.test_count + ' tests (iteration ' + d.iteration + ')</span>', true);
+      } else if (d.status === 'all_passed') {
+        addMsg('system',
+          '<div style="border:1px solid #5fe88a; border-radius:8px; padding:10px; margin:4px 0; background:#0a2a1a;">' +
+          '<span style="color:#5fe88a; font-weight:bold;">All ' + d.passed + ' tests passed</span>' +
+          '</div>', true);
+      } else if (d.status === 'error') {
+        addMsg('system', '<span style="color:#ff5555;">Test error: ' + escHtml(d.error || '') + '</span>', true);
+      }
+    });
+
+    evtSource.addEventListener('test_feedback', function(e) {
+      const d = JSON.parse(e.data);
+      addMsg('system',
+        '<div style="border:1px solid #ff5555; border-radius:8px; padding:10px; margin:4px 0; background:#2a0a0a;">' +
+        '<span style="color:#ff5555; font-weight:bold;">' + d.failed + ' tests failed</span> (' + d.passed + ' passed) &mdash; ' +
+        'feeding failures back to agent (iteration ' + d.iteration + ')' +
+        '</div>', true);
+      showSpinner('Agent fixing test failures (iter ' + d.iteration + ')...');
+    });
+
+    evtSource.addEventListener('td_review', function(e) {
+      const d = JSON.parse(e.data);
+      if (d.status === 'running') {
+        showSpinner('TD review running...');
+      } else if (d.status === 'complete' && d.review) {
+        addMsg('system',
+          '<div style="border:1px solid #b388ff; border-radius:8px; padding:12px; margin:4px 0; background:#1a0a2a;">' +
+          '<div style="color:#b388ff; font-weight:bold; margin-bottom:6px;">TD Review</div>' +
+          '<div style="white-space:pre-wrap; color:#ccc; line-height:1.5; font-size:0.9em;">' + escHtml(d.review) + '</div>' +
+          '</div>', true);
+      } else if (d.status === 'error') {
+        addMsg('system', '<span style="color:#ff5555;">TD review error: ' + escHtml(d.error || '') + '</span>', true);
+      }
+    });
+
     evtSource.addEventListener('done', function(e) {
       const d = JSON.parse(e.data);
       removeSpinner();

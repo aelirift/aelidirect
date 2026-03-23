@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 # ── Config ──────────────────────────────────────────────────────────
-BASE_URL = "http://127.0.0.1:10100"
+DEFAULT_PORT = 10101  # Test against branch by default
+BASE_URL = f"http://127.0.0.1:{DEFAULT_PORT}"
 BACKEND_DIR = Path(__file__).parent
 PROJECTS_ROOT = BACKEND_DIR.parent / "projects"
 MAX_FIX_ITERATIONS = 3
@@ -104,8 +105,18 @@ PLAN_SYSTEM_PROMPT = """You are a test planning agent. You receive:
 1. The full source code of the system
 2. A test scope (what area to focus on)
 3. Context from the conversation (what the user reported, what's broken, recent changes)
+4. The target port to test against (e.g. 10101 for branch, 10100 for prod)
 
 Your job: produce a structured JSON test plan. Each test case should be concrete and executable.
+
+CRITICAL: Every test MUST include a "setup" array that creates the preconditions needed for the test.
+For example, to test a countdown timer you must FIRST:
+- Create a todo item via the API
+- Enable the heartbeat via the API
+- Wait for the UI to update
+Only THEN can you check if the countdown shows up.
+
+Do NOT assume any state exists. Always create the conditions you need in setup.
 
 Return ONLY valid JSON in this format:
 {
@@ -116,6 +127,9 @@ Return ONLY valid JSON in this format:
       "name": "descriptive test name",
       "type": "api|browser|unit",
       "description": "what this test verifies",
+      "setup": [
+        {"action": "create precondition", "details": {"method": "POST", "path": "/api/...", "body": {...}}}
+      ],
       "steps": [
         {"action": "description of step", "details": {}}
       ],
@@ -125,10 +139,16 @@ Return ONLY valid JSON in this format:
   ]
 }
 
+The "setup" array uses the same format as API steps: each has method, path, body.
+Setup steps run BEFORE the test steps. They create todos, enable heartbeat, set config, etc.
+Setup steps are NOT asserted — they just need to return 2xx.
+
 Test types:
-- "api": HTTP calls to localhost:10100. Steps should include method, path, body, and expected status/response fields.
-- "browser": Playwright actions. Steps should include selectors, actions (click, fill, wait_for), and what to check in the DOM.
+- "api": HTTP calls. Steps should include method, path, body, and expected status/response fields.
+- "browser": Playwright actions. Steps should include selectors, actions (click, fill, wait_for), and what to check in the DOM. IMPORTANT: browser tests also have setup — use API calls in setup to create the data, then browser steps to verify the UI.
 - "unit": Direct Python imports and function calls. Steps should include module, function, args, and expected return.
+
+Use PORT_PLACEHOLDER in URLs — it will be replaced with the actual port at runtime.
 
 Be thorough but practical. Only test things that can actually be verified programmatically.
 For browser tests, use CSS selectors that exist in the actual HTML (you have the source).
@@ -141,6 +161,7 @@ async def plan_tests(
     scope: str,
     context: str = "",
     source_batch: str = "",
+    target_port: int = DEFAULT_PORT,
 ) -> dict:
     """Phase 1: Ask LLM to generate a test plan.
 
@@ -148,12 +169,16 @@ async def plan_tests(
         scope: What to test (e.g. "heartbeat countdown", "chat pipeline", "todo CRUD")
         context: Conversation context — what's broken, what was reported, recent changes
         source_batch: Pre-loaded source code. If empty, loads automatically.
+        target_port: Port to test against (10101 for branch, 10100 for prod)
     """
     if not source_batch:
         source_batch = load_source_batch("platform")
 
     user_msg = f"""## Test Scope
 {scope}
+
+## Target
+Test against port {target_port} (http://127.0.0.1:{target_port})
 
 ## Context
 {context if context else 'No specific context — do a general test sweep of the scope.'}
@@ -198,11 +223,53 @@ async def plan_tests(
 # PHASE 2: RUN — Execute test plan
 # ═══════════════════════════════════════════════════════════════════
 
-async def run_tests(plan: dict) -> list[dict]:
+async def _run_setup_steps(setup_steps: list, base_url: str) -> list[dict]:
+    """Execute setup/precondition steps before a test. These create the conditions needed.
+    Returns list of setup results (for debugging). Failures here are setup errors, not test failures."""
+    results = []
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for step in setup_steps:
+            details = step.get("details", {})
+            method = details.get("method", "POST").upper()
+            path = details.get("path", "/")
+            body = details.get("body")
+            url = f"{base_url}{path}"
+
+            try:
+                if method == "GET":
+                    resp = await client.get(url)
+                elif method == "POST":
+                    resp = await client.post(url, json=body)
+                elif method == "PUT":
+                    resp = await client.put(url, json=body)
+                elif method == "DELETE":
+                    resp = await client.delete(url)
+                else:
+                    results.append({"step": step.get("action", ""), "error": f"Unknown method: {method}"})
+                    continue
+
+                results.append({
+                    "step": step.get("action", ""),
+                    "status_code": resp.status_code,
+                    "ok": 200 <= resp.status_code < 300,
+                    "body_preview": resp.text[:200],
+                })
+            except Exception as e:
+                results.append({"step": step.get("action", ""), "error": str(e)})
+
+    return results
+
+
+async def run_tests(plan: dict, target_port: int = DEFAULT_PORT) -> list[dict]:
     """Phase 2: Execute each test case in the plan.
+
+    For each test case:
+    1. Run setup steps (create preconditions via API)
+    2. Run test steps (verify behavior)
 
     Returns list of results: [{id, name, status, details, error}]
     """
+    base_url = f"http://127.0.0.1:{target_port}"
     results = []
     for tc in plan.get("test_cases", []):
         tc_type = tc.get("type", "api")
@@ -210,10 +277,26 @@ async def run_tests(plan: dict) -> list[dict]:
         tc_name = tc.get("name", "unnamed")
 
         try:
+            # Run setup steps first (create preconditions)
+            setup_steps = tc.get("setup", [])
+            if setup_steps:
+                setup_results = await _run_setup_steps(setup_steps, base_url)
+                setup_failed = [s for s in setup_results if s.get("error") or not s.get("ok", True)]
+                if setup_failed:
+                    results.append({
+                        "id": tc_id, "name": tc_name, "type": tc_type,
+                        "expected": tc.get("expected", ""),
+                        "status": "error",
+                        "details": [{"step": "SETUP FAILED", "assertion_failed": f"Setup step failed: {setup_failed[0]}"}],
+                        "setup_results": setup_results,
+                    })
+                    continue
+                # Brief pause for server to process setup
+                await asyncio.sleep(0.5)
             if tc_type == "api":
-                result = await _run_api_test(tc)
+                result = await _run_api_test(tc, base_url)
             elif tc_type == "browser":
-                result = await _run_browser_test(tc)
+                result = await _run_browser_test(tc, base_url)
             elif tc_type == "unit":
                 result = await _run_unit_test(tc)
             else:
@@ -236,7 +319,7 @@ async def run_tests(plan: dict) -> list[dict]:
     return results
 
 
-async def _run_api_test(tc: dict) -> dict:
+async def _run_api_test(tc: dict, base_url: str = BASE_URL) -> dict:
     """Execute an API test case."""
     details = []
     last_response = None
@@ -249,7 +332,7 @@ async def _run_api_test(tc: dict) -> dict:
             body = step_details.get("body")
             expected_status = step_details.get("expected_status")
             expected_fields = step_details.get("expected_fields", {})
-            url = f"{BASE_URL}{path}"
+            url = f"{base_url}{path}"
 
             if method == "GET":
                 resp = await client.get(url)
@@ -303,8 +386,8 @@ async def _run_api_test(tc: dict) -> dict:
     return {"status": status, "details": details}
 
 
-async def _run_browser_test(tc: dict) -> dict:
-    """Execute a browser test case using Playwright."""
+async def _run_browser_test(tc: dict, base_url: str = BASE_URL) -> dict:
+    """Execute a browser test case using Playwright. Setup steps already ran via API."""
     from playwright.async_api import async_playwright
 
     details = []
@@ -322,8 +405,16 @@ async def _run_browser_test(tc: dict) -> dict:
 
                 try:
                     if step_details.get("goto"):
-                        await page.goto(step_details["goto"], wait_until="networkidle", timeout=15000)
-                        step_result["done"] = f"Navigated to {step_details['goto']}"
+                        # Replace PORT_PLACEHOLDER or hardcoded ports with actual base_url
+                        goto_url = step_details["goto"]
+                        if "PORT_PLACEHOLDER" in goto_url:
+                            goto_url = goto_url.replace("PORT_PLACEHOLDER", base_url.split(":")[-1])
+                        elif goto_url.startswith("/"):
+                            goto_url = f"{base_url}{goto_url}"
+                        elif "127.0.0.1:10100" in goto_url:
+                            goto_url = goto_url.replace("127.0.0.1:10100", f"127.0.0.1:{base_url.split(':')[-1]}")
+                        await page.goto(goto_url, wait_until="networkidle", timeout=15000)
+                        step_result["done"] = f"Navigated to {goto_url}"
 
                     if step_details.get("click"):
                         selector = step_details["click"]

@@ -899,12 +899,26 @@ async def direct_stream(message: str, project_dir: str):
 
                     # ── TEST PHASE ──────────────────────────────────
                     # If agent made code changes and we have iterations left:
-                    # run test agent, and if failures found, inject them back as user message
-                    # with full context preserved and turn count reset.
+                    # 1. Restart branch so changes take effect on 10101
+                    # 2. Run test agent against branch
+                    # 3. If failures, inject back as user message with context preserved
                     if (_made_code_changes
                             and _test_fix_iteration < _max_test_fix):
                         try:
                             from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
+
+                            # Restart branch server BEFORE testing so tests hit the new code
+                            if project_path.resolve() == _BRANCH_ROOT.resolve():
+                                import subprocess as _test_sp
+                                yield sse_event("test_phase", {"status": "deploying_branch"})
+                                try:
+                                    _test_sp.run(
+                                        ["systemctl", "--user", "restart", "aelidirect-branch.service"],
+                                        check=True, timeout=10,
+                                    )
+                                    await asyncio.sleep(2)  # Wait for server to come up
+                                except Exception:
+                                    pass
 
                             _test_fix_iteration += 1
                             yield sse_event("test_phase", {
@@ -921,10 +935,14 @@ async def direct_stream(message: str, project_dir: str):
                             source_batch = await asyncio.to_thread(
                                 load_source_batch, "platform"
                             )
+
+                            # Test against branch (10101) for platform, else prod
+                            _test_port = 10101 if project_path.resolve() == _BRANCH_ROOT.resolve() else 10100
                             plan = await plan_tests(
                                 scope=msg,
                                 context=_test_context,
                                 source_batch=source_batch,
+                                target_port=_test_port,
                             )
 
                             if not plan.get("error"):
@@ -935,7 +953,7 @@ async def direct_stream(message: str, project_dir: str):
                                     "iteration": _test_fix_iteration,
                                 })
 
-                                results = await run_tests(plan)
+                                results = await run_tests(plan, target_port=_test_port)
                                 passed = sum(1 for r in results if r.get("status") == "pass")
                                 failed = [r for r in results if r.get("status") in ("fail", "error")]
 
@@ -1187,8 +1205,10 @@ async def direct_stream(message: str, project_dir: str):
                 # Regenerate docs in background after chat completion
                 loop = asyncio.get_event_loop()
                 loop.create_task(_regenerate_docs())
-                # Auto-restart branch server if we edited platform files
-                if project_path.resolve() == _BRANCH_ROOT.resolve():
+                # Restart branch if code changed but tests didn't run (no test phase triggered)
+                # If test phase ran, it already restarted the branch before testing.
+                if (project_path.resolve() == _BRANCH_ROOT.resolve()
+                        and _made_code_changes and _test_fix_iteration == 0):
                     import subprocess
                     try:
                         subprocess.run(["systemctl", "--user", "restart", "aelidirect-branch.service"],

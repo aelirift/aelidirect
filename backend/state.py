@@ -129,7 +129,6 @@ DIRECT_AGENT_PROMPT = (
     "RULES:\n"
     "- patch_file for existing files, edit_file only for new files\n"
     "- Files under 400 lines, split by concern\n"
-    "- Apps listen on 0.0.0.0:8000 with /health endpoint\n"
     "- git_commit after successful changes\n\n"
     "PLATFORM EDITING (aelidirect_platform):\n"
     "- After any platform file edit: syntax-check, then restart_platform()\n"

@@ -75,6 +75,18 @@ async def wipe_branch():
     wiped = []
     errors = []
 
+    # Clear branch-session memories on prod (created during branch editing)
+    from constants import MEMORY_DIR, CONVERSATIONS_DIR
+    branch_mem_dir = MEMORY_DIR / BRANCH_ROOT.name
+    if branch_mem_dir.exists():
+        shutil.rmtree(str(branch_mem_dir))
+        wiped.append(f"memory/{BRANCH_ROOT.name}/")
+    # Clear branch-session conversations on prod
+    branch_conv_dir = CONVERSATIONS_DIR / BRANCH_ROOT.name
+    if branch_conv_dir.exists():
+        shutil.rmtree(str(branch_conv_dir))
+        wiped.append(f"conversations/{BRANCH_ROOT.name}/")
+
     # Full sync: copy EVERYTHING from prod → branch (except .git)
     # Delete branch contents first, then copy prod entirely
     try:

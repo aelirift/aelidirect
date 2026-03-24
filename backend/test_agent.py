@@ -265,12 +265,21 @@ def _make_button_click_test(base_url: str, label: str):
                 await asyncio.sleep(1)
                 # Check if a modal/overlay appeared
                 modal = await page.query_selector(".ctx-modal-backdrop, .modal-backdrop, .modal-overlay, [class*='modal']")
-                if modal:
-                    visible = await modal.is_visible()
-                    if visible:
-                        return {"status": "pass", "details": [{"step": f"click '{label}'", "done": "modal opened"}]}
-                # Check if any new visible element appeared
-                return {"status": "fail", "details": [{"step": f"click '{label}'", "assertion_failed": "Clicked but no modal/overlay appeared"}]}
+                if not modal or not await modal.is_visible():
+                    return {"status": "fail", "details": [{"step": f"click '{label}'", "assertion_failed": "Clicked but no modal/overlay appeared"}]}
+                # Check modal has actual content (not empty)
+                modal_text = await modal.text_content() or ""
+                modal_text = modal_text.strip()
+                if len(modal_text) < 20:
+                    return {"status": "fail", "details": [{"step": f"modal content", "assertion_failed": f"Modal opened but content is empty or too short ({len(modal_text)} chars)"}]}
+                # Check it doesn't show error/placeholder
+                lower = modal_text.lower()
+                if "no " in lower[:30] and "generated" in lower[:60]:
+                    return {"status": "fail", "details": [{"step": "modal content", "assertion_failed": f"Modal shows placeholder: '{modal_text[:80]}'"}]}
+                return {"status": "pass", "details": [
+                    {"step": f"click '{label}'", "done": "modal opened"},
+                    {"step": "modal content", "done": f"has content ({len(modal_text)} chars)"},
+                ]}
             except Exception as e:
                 return {"status": "fail", "details": [{"step": f"click '{label}'", "assertion_failed": str(e)}]}
             finally:
@@ -335,6 +344,7 @@ async def run_tests_from_changes(
     messages: list,
     project_dir: str,
     target_port: int = DEFAULT_PORT,
+    user_prompt: str = "",
 ) -> dict:
     """Generate and run tests from code changes. No LLM involved.
 

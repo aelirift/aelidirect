@@ -548,9 +548,20 @@ async def run_chat_pipeline(message: str, project_dir: str):
                                     try:
                                         _args = json.loads(_fn.get("arguments", "{}"))
                                         _path = _args.get("path", "")
-                                        _new = _args.get("new_text", "")[:500]
+                                        _old = _args.get("old_text", "")
+                                        _new = _args.get("new_text", "")
                                         if _path and _new:
-                                            _changes_summary.append(f"In {_path}, added:\n{_new}")
+                                            # Find lines that are NEW (in new_text but not in old_text)
+                                            _old_lines = set(_old.splitlines()) if _old else set()
+                                            _new_lines = _new.splitlines()
+                                            _added = [l for l in _new_lines if l.strip() and l not in _old_lines]
+                                            if _added:
+                                                _changes_summary.append(f"In {_path}, added:\n" + "\n".join(_added[:20]))
+                                            # Find lines REMOVED
+                                            _new_set = set(_new.splitlines())
+                                            _removed = [l for l in (_old.splitlines() if _old else []) if l.strip() and l not in _new_set]
+                                            if _removed:
+                                                _changes_summary.append(f"In {_path}, removed:\n" + "\n".join(_removed[:10]))
                                     except (json.JSONDecodeError, TypeError):
                                         pass
 
@@ -565,6 +576,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
                         messages=messages,
                         project_dir=project_dir,
                         target_port=_test_port,
+                        user_prompt=msg,
                     )
 
                     results = _test_result.get("results", [])

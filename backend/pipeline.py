@@ -568,19 +568,48 @@ async def run_chat_pipeline(message: str, project_dir: str):
                         yield sse_event("test_phase", {
                             "status": "planning", "iteration": _test_fix_iteration,
                         })
+
+                        # Extract what the agent actually changed (not full source)
+                        _changes_summary = []
+                        _api_changes = []
+                        for _cm in messages:
+                            if _cm.get("role") == "tool":
+                                _cc = _cm.get("content", "")
+                                if _cc.startswith("Patched "):
+                                    _changes_summary.append(_cc[:300])
+                                elif _cc.startswith("File written"):
+                                    _changes_summary.append(_cc[:300])
+                            # Capture what the agent planned to build
+                            if _cm.get("role") == "assistant" and _cm.get("tool_calls"):
+                                for _tc in _cm["tool_calls"]:
+                                    _fn = _tc.get("function", {})
+                                    if _fn.get("name") == "patch_file":
+                                        try:
+                                            _args = json.loads(_fn.get("arguments", "{}"))
+                                            _path = _args.get("path", "")
+                                            _new = _args.get("new_text", "")[:500]
+                                            if _path and _new:
+                                                _changes_summary.append(f"In {_path}, added:\n{_new}")
+                                        except (json.JSONDecodeError, TypeError):
+                                            pass
+
                         _test_context = (
                             f"Task: {msg}\n"
                             f"Active project: {project_dir}\n"
-                            f"Agent response: {_last_response_text[:1000]}\n"
-                            f"IMPORTANT: Test on project '{project_dir}' — use it in all API paths. "
-                            f"Do NOT create new projects. Only test the specific feature requested."
+                            f"Target port: {_test_port}\n\n"
+                            f"## Code Changes Made\n"
+                            + "\n".join(f"- {c}" for c in _changes_summary) + "\n\n"
+                            f"## Agent Response\n{_last_response_text[:500]}\n\n"
+                            f"Test ONLY what was changed. Use project '{project_dir}' in all API paths."
                         )
-                        source_batch = await asyncio.to_thread(load_source_batch, "platform")
+                        # Send focused context instead of full source
                         _test_plan = await plan_tests(
                             scope=msg, context=_test_context,
-                            source_batch=source_batch, target_port=_test_port,
+                            source_batch="",  # No full source — changes summary is enough
+                            target_port=_test_port,
                         )
                         if _test_plan.get("error"):
+                            _log.warning(f"[pipeline] TEST PLAN ERROR: {_test_plan.get('error', '')} raw={_test_plan.get('raw', '')[:300]}")
                             yield sse_event("test_phase", {"status": "error", "error": _test_plan.get("error", "")[:200]})
                             break
 

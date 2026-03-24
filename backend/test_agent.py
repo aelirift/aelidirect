@@ -184,9 +184,6 @@ async def plan_tests(
         source_batch: Pre-loaded source code. If empty, loads automatically.
         target_port: Port to test against (10101 for branch, 10100 for prod)
     """
-    if not source_batch:
-        source_batch = load_source_batch("platform")
-
     user_msg = f"""## Test Scope
 {scope}
 
@@ -195,10 +192,9 @@ Test against port {target_port} (http://127.0.0.1:{target_port})
 
 ## Context
 {context if context else 'No specific context — do a general test sweep of the scope.'}
-
-## Source Code
-{source_batch}
 """
+    if source_batch:
+        user_msg += f"\n## Source Code\n{source_batch}\n"
 
     # Call LLM to generate test plan
     from llm_client import call_llm, extract_response

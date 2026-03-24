@@ -294,7 +294,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
             system_prompt += "\n\n[PROJECT SPEC]\n" + spec_path.read_text()
 
         # Long-term memory
-        mem_dir = MEMORY_DIR / project_path.name
+        mem_dir = MEMORY_DIR / project_dir
         if mem_dir.exists():
             memories = []
             for f in sorted(mem_dir.glob("*.md")):
@@ -304,7 +304,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
 
         # Recent conversation history (trimmed to last 5 for efficiency)
         conv_history = await asyncio.to_thread(
-            _load_conversation_history, project_path.name, prov, selected
+            _load_conversation_history, project_dir, prov, selected
         )
         if conv_history:
             # Cap at ~10k tokens to leave room for actual work
@@ -486,16 +486,16 @@ async def run_chat_pipeline(message: str, project_dir: str):
                         elif name == "memory_save":
                             key = args.get("key", "").replace("/", "_").replace("..", "")
                             content = args.get("content", "")
-                            mem_dir = MEMORY_DIR / project_path.name
+                            mem_dir = MEMORY_DIR / project_dir
                             mem_dir.mkdir(exist_ok=True)
                             (mem_dir / f"{key}.md").write_text(content)
                             result = f"Saved memory: {key} ({len(content)} chars)"
                         elif name == "memory_load":
                             key = args.get("key", "").replace("/", "_").replace("..", "")
-                            mem_path = MEMORY_DIR / project_path.name / f"{key}.md"
+                            mem_path = MEMORY_DIR / project_dir / f"{key}.md"
                             result = mem_path.read_text() if mem_path.exists() else f"Memory '{key}' not found"
                         elif name == "memory_list":
-                            mem_dir = MEMORY_DIR / project_path.name
+                            mem_dir = MEMORY_DIR / project_dir
                             if mem_dir.exists():
                                 keys = [f.stem for f in sorted(mem_dir.glob("*.md"))]
                                 result = "Saved memories:\n" + "\n".join(f"  - {k}" for k in keys) if keys else "No memories saved"

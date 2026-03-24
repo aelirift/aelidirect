@@ -620,8 +620,10 @@ async def run_chat_pipeline(message: str, project_dir: str):
                     # Remind agent of original task so it doesn't drift into fixing test infra
                     failure_msg = (
                         f"ORIGINAL TASK: {msg}\n\n"
-                        f"Fix ONLY the failures related to the original task. "
-                        f"Do NOT add new endpoints or modify test infrastructure.\n\n"
+                        f"Fix ONLY real code/design bugs in YOUR code. "
+                        f"Do NOT create fake endpoints, workarounds, or stubs to pass tests. "
+                        f"If a test failure looks like a testing issue (wrong selector, timeout, "
+                        f"page not loaded), ignore it and focus on real bugs only.\n\n"
                         + failure_msg
                     )
                     if _last_response_text:

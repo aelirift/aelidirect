@@ -292,7 +292,7 @@ async def _run_setup_steps(setup_steps: list, base_url: str) -> list[dict]:
                     resp = await client.put(url, json=body)
                 elif method == "DELETE":
                     resp = await client.delete(url)
-                elif method in ("NAVIGATE", "WAIT", "CLICK", "FILL"):
+                elif method in ("NAVIGATE", "WAIT", "CLICK", "FILL", "BROWSER", "GOTO", "OPEN"):
                     # Browser actions in setup — skip, handled by browser test runner
                     results.append({"step": step.get("action", ""), "ok": True, "skipped": "browser action"})
                     continue
@@ -356,7 +356,7 @@ async def run_tests(plan: dict, target_port: int = DEFAULT_PORT) -> list[dict]:
         except Exception as e:
             result = {
                 "status": "error",
-                "details": str(e),
+                "details": [{"step": "exception", "assertion_failed": str(e)}],
                 "traceback": traceback.format_exc(),
             }
 

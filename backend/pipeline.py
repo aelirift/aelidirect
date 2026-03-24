@@ -883,7 +883,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
                                 _review_input += f"- [{_status.upper()}] {_d.get('id', '?')}: {_d.get('name', '')}\n"
                                 if _status != "pass":
                                     for _det in _d.get("details", []):
-                                        if _det.get("assertion_failed"):
+                                        if isinstance(_det, dict) and _det.get("assertion_failed"):
                                             _review_input += f"    FAIL: {_det['assertion_failed'][:200]}\n"
                         _review_input = _review_input[:TRUNCATE_TD_INPUT]
 

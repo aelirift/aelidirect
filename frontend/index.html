@@ -1074,7 +1074,7 @@ button { cursor: pointer; font-family: inherit; }
             <span class="proj-dir" id="project-bar-dir"></span>
             <button class="ctx-map-btn" onclick="showSpec(state.projectDir)">Spec</button>
             <button class="ctx-map-btn" onclick="showContextMap(state.projectDir)">Context Map</button>
-            <button class="ctx-map-btn" onclick="showPlatformDocs('SITE_MAP.md')">Site Map</button>
+            <button class="ctx-map-btn" onclick="showSiteMap(state.projectDir)">Site Map</button>
             <button class="ctx-map-btn" onclick="eraseHistory()" style="color:#ff5555;border-color:#ff555544;">Erase History</button>
             <span class="turn-counter" id="turn-counter"></span>
           </div>
@@ -1970,60 +1970,29 @@ async function showContextMap(dirName) {
   }
 }
 
-async function showPlatformDocs(initialTab) {
+async function showSiteMap(dirName) {
+  if (!dirName) return;
   try {
     const resp = await fetch('/api/platform/docs');
     const docs = await resp.json();
-
-    const tabs = [
-      { label: 'What Is This?', key: 'SPEC.md' },
-      { label: 'Where Things Are', key: 'CONTEXT_MAP.md' },
-      { label: 'How Data Flows', key: 'DATA_FLOW.md' },
-      { label: 'Site Map', key: 'SITE_MAP.md' },
-    ];
+    const siteMap = docs['SITE_MAP.md'] || 'No site map generated yet.';
 
     const backdrop = document.createElement('div');
     backdrop.className = 'ctx-modal-backdrop';
     backdrop.onclick = function(e) { if (e.target === backdrop) backdrop.remove(); };
-
-    const modal = document.createElement('div');
-    modal.className = 'ctx-modal docs-modal';
-
-    // Header
-    modal.innerHTML =
-      '<div class="ctx-modal-header">' +
-        '<h3>How This Platform Works</h3>' +
-        '<button class="ctx-modal-close" onclick="this.closest(\'.ctx-modal-backdrop\').remove()">&times;</button>' +
+    backdrop.innerHTML =
+      '<div class="ctx-modal docs-modal">' +
+        '<div class="ctx-modal-header">' +
+          '<h3>Site Map &mdash; ' + escHtml(dirName) + '</h3>' +
+          '<button class="ctx-modal-close" onclick="this.closest(\'.ctx-modal-backdrop\').remove()">&times;</button>' +
+        '</div>' +
+        '<div class="ctx-modal-body docs-content">' +
+          '<pre>' + escHtml(siteMap) + '</pre>' +
+        '</div>' +
       '</div>';
-
-    // Tabs
-    const tabBar = document.createElement('div');
-    tabBar.className = 'docs-tabs';
-    tabs.forEach(function(tab, i) {
-      const btn = document.createElement('button');
-      const isActive = initialTab ? tab.key === initialTab : i === 0;
-      btn.className = 'docs-tab' + (isActive ? ' active' : '');
-      btn.textContent = tab.label;
-      btn.onclick = function() {
-        tabBar.querySelectorAll('.docs-tab').forEach(function(b) { b.classList.remove('active'); });
-        btn.classList.add('active');
-        contentDiv.innerHTML = renderMarkdown(docs[tab.key] || 'Not available yet.');
-      };
-      tabBar.appendChild(btn);
-    });
-    modal.appendChild(tabBar);
-
-    // Content
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'docs-content';
-    const defaultTab = tabs.find(t => t.key === initialTab) || tabs[0];
-    contentDiv.innerHTML = renderMarkdown(docs[defaultTab.key] || 'Not available yet.');
-    modal.appendChild(contentDiv);
-
-    backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
   } catch (e) {
-    alert('Failed to load docs: ' + e.message);
+    alert('Failed to load site map: ' + e.message);
   }
 }
 

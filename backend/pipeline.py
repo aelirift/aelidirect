@@ -594,12 +594,17 @@ async def run_chat_pipeline(message: str, project_dir: str):
                                             pass
 
                         _test_context = (
-                            f"Task: {msg}\n"
-                            f"Active project: {project_dir}\n"
-                            f"Target port: {_test_port}\n\n"
+                            f"## Original Request\n{msg}\n\n"
+                            f"## Why These Changes\n"
+                            f"User asked: {msg}\n"
+                            f"Agent plan: {_plan_text[:500] if _plan_text else 'N/A'}\n\n"
                             f"## Code Changes Made\n"
                             + "\n".join(f"- {c}" for c in _changes_summary) + "\n\n"
-                            f"## Agent Response\n{_last_response_text[:500]}\n\n"
+                            f"## Expected Outcome\n"
+                            f"The changes above should fulfill the original request. "
+                            f"Verify the user's request works end-to-end, not just that code exists.\n\n"
+                            f"Active project: {project_dir}\n"
+                            f"Target port: {_test_port}\n"
                             f"Test ONLY what was changed. Use project '{project_dir}' in all API paths."
                         )
                         # Send focused context instead of full source

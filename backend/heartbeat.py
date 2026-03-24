@@ -317,7 +317,7 @@ async def api_get_heartbeat(project_dir: str):
 
 
 @router.post("/api/direct/heartbeat/{project_dir}")
-async def api_set_heartbeat(project_dir: str, request: Request):
+async def update_heartbeat_config(project_dir: str, request: Request):
     data = await request.json()
     hb = get_heartbeat(project_dir)
     if "enabled" in data:
@@ -329,7 +329,7 @@ async def api_set_heartbeat(project_dir: str, request: Request):
 
 
 @router.post("/api/direct/heartbeat/{project_dir}/run")
-async def api_run_heartbeat_now(project_dir: str):
+async def trigger_heartbeat_now(project_dir: str):
     """Run next pending todo via the chat pipeline — same as clicking Run in the UI."""
     from tools import PROJECTS_ROOT
     project_path = PROJECTS_ROOT / project_dir

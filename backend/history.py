@@ -166,7 +166,7 @@ async def erase_history(project_dir: str):
 
 
 @router.get("/api/direct/history/{project_dir}")
-async def get_direct_history(project_dir: str):
+async def list_project_conversations(project_dir: str):
     conv_dir = CONVERSATIONS_DIR / project_dir
     if not conv_dir.exists():
         return {"conversations": []}

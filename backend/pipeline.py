@@ -175,7 +175,7 @@ def _trim_messages(messages: list) -> list:
 
 
 @router.post("/api/direct/start")
-async def direct_start(request: Request):
+async def create_or_select_project(request: Request):
     from tools import PROJECTS_ROOT, init_project_dir, write_project_env, set_active_project, read_project_env
 
     data = await request.json()
@@ -226,7 +226,7 @@ async def direct_start(request: Request):
 
 
 @router.get("/api/direct/stream")
-async def direct_stream(message: str, project_dir: str):
+async def run_chat_pipeline(message: str, project_dir: str):
     from tools import PROJECTS_ROOT, set_active_project, read_project_env, file_cache_wipe_branch
 
     project_path = PROJECTS_ROOT / project_dir

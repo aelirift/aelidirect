@@ -326,40 +326,8 @@ async def run_chat_pipeline(message: str, project_dir: str):
 
         try:
             _log.info(f"[pipeline] START project={project_dir} msg={msg[:80]}")
-            # ── PLANNING TURN (no tools — forces numbered steps) ──
-            yield sse_event("phase", {"phase": "planning"})
-            total_turns += 1
-            yield sse_event("turn", {"turn": total_turns, "action_turns": 0, "max": max_turns})
-
-            # Inject planning instruction as user message, get plan, then replace with original msg
-            _plan_messages = list(messages)  # copy
-            _plan_messages[-1] = {"role": "user", "content": (
-                f"Task: {msg}\n\n"
-                "Based on SITE_MAP and SPEC above, output your implementation plan as numbered steps.\n"
-                "Each step: which file, which function, what change.\n"
-                "If unsure about details, keep that step general.\n"
-                "Do NOT output tool calls, code blocks, or <think> blocks.\n"
-                "Output ONLY numbered steps as plain text."
-            )}
-            _plan_raw = await asyncio.to_thread(
-                call_llm, selected, prov["api_key"], prov["base_url"],
-                prov["model"], _plan_messages, None, 0.3,  # No tools
-            )
-            _plan_parsed = extract_response(_plan_raw)
-            _plan_text = _plan_parsed.get("content", "")
-
-            # Strip any hallucinated tool calls or think blocks
-            import re as _plan_re
-            _plan_text = _plan_re.sub(r'<think>[\s\S]*?</think>', '', _plan_text)
-            _plan_text = _plan_re.sub(r'\[TOOL_CALL\][\s\S]*?\[/TOOL_CALL\]', '', _plan_text)
-            _plan_text = _plan_text.strip()
-
-            if _plan_text:
-                # Send as collapsible plan event (not thinking — separate UI)
-                yield sse_event("plan", {"content": _plan_text})
-                # Append clean plan to messages so agent knows what it planned
-                messages.append({"role": "assistant", "content": _plan_text})
-                messages.append({"role": "user", "content": "Execute this plan now. Use tools directly."})
+            # ── PLANNING TURN (disabled — model hallucinates tool calls and adds unrelated fixes) ──
+            _plan_text = ""
 
             # ── CODING (tools enabled) ──
             yield sse_event("phase", {"phase": "coding"})

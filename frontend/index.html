@@ -1074,6 +1074,7 @@ button { cursor: pointer; font-family: inherit; }
             <span class="proj-dir" id="project-bar-dir"></span>
             <button class="ctx-map-btn" onclick="showSpec(state.projectDir)">Spec</button>
             <button class="ctx-map-btn" onclick="showContextMap(state.projectDir)">Context Map</button>
+            <button class="ctx-map-btn" onclick="showPlatformDocs('SITE_MAP.md')">Site Map</button>
             <button class="ctx-map-btn" onclick="eraseHistory()" style="color:#ff5555;border-color:#ff555544;">Erase History</button>
             <span class="turn-counter" id="turn-counter"></span>
           </div>
@@ -1969,7 +1970,7 @@ async function showContextMap(dirName) {
   }
 }
 
-async function showPlatformDocs() {
+async function showPlatformDocs(initialTab) {
   try {
     const resp = await fetch('/api/platform/docs');
     const docs = await resp.json();
@@ -1978,6 +1979,7 @@ async function showPlatformDocs() {
       { label: 'What Is This?', key: 'SPEC.md' },
       { label: 'Where Things Are', key: 'CONTEXT_MAP.md' },
       { label: 'How Data Flows', key: 'DATA_FLOW.md' },
+      { label: 'Site Map', key: 'SITE_MAP.md' },
     ];
 
     const backdrop = document.createElement('div');
@@ -1999,7 +2001,8 @@ async function showPlatformDocs() {
     tabBar.className = 'docs-tabs';
     tabs.forEach(function(tab, i) {
       const btn = document.createElement('button');
-      btn.className = 'docs-tab' + (i === 0 ? ' active' : '');
+      const isActive = initialTab ? tab.key === initialTab : i === 0;
+      btn.className = 'docs-tab' + (isActive ? ' active' : '');
       btn.textContent = tab.label;
       btn.onclick = function() {
         tabBar.querySelectorAll('.docs-tab').forEach(function(b) { b.classList.remove('active'); });
@@ -2013,7 +2016,8 @@ async function showPlatformDocs() {
     // Content
     const contentDiv = document.createElement('div');
     contentDiv.className = 'docs-content';
-    contentDiv.innerHTML = renderMarkdown(docs[tabs[0].key] || 'Not available yet.');
+    const defaultTab = tabs.find(t => t.key === initialTab) || tabs[0];
+    contentDiv.innerHTML = renderMarkdown(docs[defaultTab.key] || 'Not available yet.');
     modal.appendChild(contentDiv);
 
     backdrop.appendChild(modal);
@@ -2840,16 +2844,24 @@ async function wipeBranch() {
 async function deployBranch() {
   if (!confirm('Deploy branch to prod? This will overwrite prod source files and restart the server.')) return;
   try {
-    const resp = await fetch('/api/platform/branch-deploy', { method: 'POST' });
+    // Always call branch server (10101) to deploy — prod can't restart itself
+    const resp = await fetch('http://127.0.0.1:10101/api/platform/branch-deploy', { method: 'POST' });
     if (!resp.ok) {
       addMsg('error', 'Deploy failed: server returned ' + resp.status);
       return;
     }
     const data = await resp.json();
     if (data.ok) {
-      addMsg('system', 'Deployed to prod — ' + (data.deployed || []).join(', ') + '. Server restarting...');
-      // Wait for server to come back, then refresh
-      setTimeout(function() { location.reload(); }, 3000);
+      addMsg('system', 'Deployed to prod — ' + (data.deployed || []).join(', ') + '. Restarting prod...');
+      // Prod is restarting — poll until it's back, then refresh
+      var _retries = 0;
+      var _pollReload = setInterval(function() {
+        _retries++;
+        fetch('/api/config').then(function(r) {
+          if (r.ok) { clearInterval(_pollReload); location.reload(); }
+        }).catch(function() {});
+        if (_retries > 20) { clearInterval(_pollReload); location.reload(); }
+      }, 1500);
     } else {
       var errDetail = (data.errors && data.errors.length > 0)
         ? data.errors.join('; ')

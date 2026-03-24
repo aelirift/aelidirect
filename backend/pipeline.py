@@ -506,14 +506,12 @@ async def run_chat_pipeline(message: str, project_dir: str):
             _log.info(f"[pipeline] AGENT LOOP DONE turns={total_turns} action={action_turns} "
                       f"code_changes={_made_code_changes} tools_used={_used_any_tools} "
                       f"msgs={len(messages)} chars={_msg_chars}")
-            # Plan tests ONCE. Re-run same plan on retries (don't re-plan).
-            # On failure, include original task + failures → re-enter main agent loop.
-            _test_plan = None  # Planned once, reused on retries
+            # ── TEST PHASE — programmatic tests from code changes ──
             if _made_code_changes:
                 _log.info(f"[pipeline] TEST PHASE starting (max {_max_test_fix} iterations)")
             while (_made_code_changes and _test_fix_iteration < _max_test_fix):
                 try:
-                    from test_agent import plan_tests, run_tests, format_failures_as_message, load_source_batch
+                    from test_agent import run_tests_from_changes, format_failures_as_message
 
                     _phase = "testing"
                     yield sse_event("phase", {"phase": "testing"})
@@ -534,79 +532,58 @@ async def run_chat_pipeline(message: str, project_dir: str):
                     _test_fix_iteration += 1
                     _test_port = BRANCH_PORT if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_PORT
 
-                    # Plan tests ONCE on first iteration, reuse on retries
-                    if _test_plan is None:
-                        yield sse_event("test_phase", {
-                            "status": "planning", "iteration": _test_fix_iteration,
-                        })
+                    # Extract what the agent changed
+                    _changes_summary = []
+                    for _cm in messages:
+                        if _cm.get("role") == "tool":
+                            _cc = _cm.get("content", "")
+                            if _cc.startswith("Patched "):
+                                _changes_summary.append(_cc[:300])
+                            elif _cc.startswith("File written"):
+                                _changes_summary.append(_cc[:300])
+                        if _cm.get("role") == "assistant" and _cm.get("tool_calls"):
+                            for _tc in _cm["tool_calls"]:
+                                _fn = _tc.get("function", {})
+                                if _fn.get("name") == "patch_file":
+                                    try:
+                                        _args = json.loads(_fn.get("arguments", "{}"))
+                                        _path = _args.get("path", "")
+                                        _new = _args.get("new_text", "")[:500]
+                                        if _path and _new:
+                                            _changes_summary.append(f"In {_path}, added:\n{_new}")
+                                    except (json.JSONDecodeError, TypeError):
+                                        pass
 
-                        # Extract what the agent actually changed (not full source)
-                        _changes_summary = []
-                        _api_changes = []
-                        for _cm in messages:
-                            if _cm.get("role") == "tool":
-                                _cc = _cm.get("content", "")
-                                if _cc.startswith("Patched "):
-                                    _changes_summary.append(_cc[:300])
-                                elif _cc.startswith("File written"):
-                                    _changes_summary.append(_cc[:300])
-                            # Capture what the agent planned to build
-                            if _cm.get("role") == "assistant" and _cm.get("tool_calls"):
-                                for _tc in _cm["tool_calls"]:
-                                    _fn = _tc.get("function", {})
-                                    if _fn.get("name") == "patch_file":
-                                        try:
-                                            _args = json.loads(_fn.get("arguments", "{}"))
-                                            _path = _args.get("path", "")
-                                            _new = _args.get("new_text", "")[:500]
-                                            if _path and _new:
-                                                _changes_summary.append(f"In {_path}, added:\n{_new}")
-                                        except (json.JSONDecodeError, TypeError):
-                                            pass
-
-                        _test_context = (
-                            f"## Original Request\n{msg}\n\n"
-                            f"## Why These Changes\n"
-                            f"User asked: {msg}\n"
-                            f"Agent plan: {_plan_text[:500] if _plan_text else 'N/A'}\n\n"
-                            f"## Code Changes Made\n"
-                            + "\n".join(f"- {c}" for c in _changes_summary) + "\n\n"
-                            f"## Expected Outcome\n"
-                            f"The changes above should fulfill the original request. "
-                            f"Verify the user's request works end-to-end, not just that code exists.\n\n"
-                            f"Active project: {project_dir}\n"
-                            f"Target port: {_test_port}\n"
-                            f"Test ONLY what was changed. Use project '{project_dir}' in all API paths."
-                        )
-                        # Send focused context instead of full source
-                        _test_plan = await plan_tests(
-                            scope=msg, context=_test_context,
-                            source_batch="",  # No full source — changes summary is enough
-                            target_port=_test_port,
-                        )
-                        if _test_plan.get("error"):
-                            _log.warning(f"[pipeline] TEST PLAN ERROR: {_test_plan.get('error', '')} raw={_test_plan.get('raw', '')[:300]}")
-                            yield sse_event("test_phase", {"status": "error", "error": _test_plan.get("error", "")[:200]})
-                            break
-
-                    tc_count = len(_test_plan.get("test_cases", []))
-                    plan_details = [{"id": tc.get("id", "?"), "name": tc.get("name", ""), "type": tc.get("type", "")}
-                                    for tc in _test_plan.get("test_cases", [])]
                     yield sse_event("test_phase", {
-                        "status": "running", "test_count": tc_count,
+                        "status": "running",
                         "iteration": _test_fix_iteration,
-                        "plan_summary": _test_plan.get("summary", ""),
-                        "tests": plan_details,
                     })
 
-                    results = await run_tests(_test_plan, target_port=_test_port)
-                    passed = sum(1 for r in results if r.get("status") == "pass")
-                    failed = [r for r in results if r.get("status") in ("fail", "error")]
+                    # Run tests programmatically — no LLM planning
+                    _test_result = await run_tests_from_changes(
+                        changes_summary=_changes_summary,
+                        messages=messages,
+                        project_dir=project_dir,
+                        target_port=_test_port,
+                    )
+
+                    results = _test_result.get("results", [])
+                    passed = _test_result.get("passed", 0)
+                    failed = _test_result.get("failed", 0)
+
+                    # Send test count now that we know
+                    yield sse_event("test_phase", {
+                        "status": "running",
+                        "test_count": _test_result.get("total", 0),
+                        "iteration": _test_fix_iteration,
+                        "plan_summary": _test_result.get("summary", ""),
+                        "tests": [{"id": r.get("id", "?"), "name": r.get("name", ""), "type": r.get("type", "")} for r in results],
+                    })
 
                     _test_evidence.append({
                         "iteration": _test_fix_iteration,
-                        "plan_summary": _test_plan.get("summary", ""),
-                        "total": len(results), "passed": passed, "failed": len(failed),
+                        "plan_summary": _test_result.get("summary", ""),
+                        "total": _test_result.get("total", 0), "passed": passed, "failed": failed,
                         "details": results,
                     })
 
@@ -639,7 +616,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
                     })
 
                     # Inject failures + original task into conversation, re-enter MAIN loop
-                    failure_msg = format_failures_as_message(results, _test_plan)
+                    failure_msg = format_failures_as_message(results)
                     # Remind agent of original task so it doesn't drift into fixing test infra
                     failure_msg = (
                         f"ORIGINAL TASK: {msg}\n\n"

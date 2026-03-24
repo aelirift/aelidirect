@@ -117,7 +117,7 @@ async def get_project_docs(dir_name: str):
     from tools import PROJECTS_ROOT
     project_dir = PROJECTS_ROOT / dir_name
     docs = {}
-    for name in ("SPEC.md", "CONTEXT_MAP.md", "DATA_FLOW.md", "SITE_MAP.md"):
+    for name in ("SPEC.md", "CONTEXT_MAP.md", "DATA_FLOW.md"):
         path = project_dir / name
         docs[name] = path.read_text() if path.exists() else None
     return docs
@@ -125,10 +125,10 @@ async def get_project_docs(dir_name: str):
 
 @app.get("/api/platform/docs")
 async def get_platform_docs():
-    """Get platform docs (SPEC, CONTEXT_MAP, DATA_FLOW, SITE_MAP)."""
+    """Get platform docs (SPEC, CONTEXT_MAP, DATA_FLOW)."""
     platform_root = Path(__file__).parent.parent
     docs = {}
-    for name in ("SPEC.md", "CONTEXT_MAP.md", "DATA_FLOW.md", "SITE_MAP.md"):
+    for name in ("SPEC.md", "CONTEXT_MAP.md", "DATA_FLOW.md"):
         path = platform_root / name
         docs[name] = path.read_text() if path.exists() else None
     return docs

@@ -1674,6 +1674,19 @@ async function sendMessage() {
         '</div>', true);
     });
 
+    evtSource.addEventListener('plan', function(e) {
+      const d = JSON.parse(e.data);
+      var html = '<div style="border:1px solid #ffa50066; border-radius:8px; margin:4px 0; background:#1a1a0a;">';
+      html += '<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'" ' +
+        'style="padding:10px 12px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">';
+      html += '<span style="color:#ffa500; font-weight:bold;">Plan</span>';
+      html += '<span style="color:#ffa500; font-size:0.8em;">click to view steps</span></div>';
+      html += '<div style="display:none; padding:0 12px 12px 12px; border-top:1px solid #ffa50022;">';
+      html += '<div style="white-space:pre-wrap; color:#ccc; line-height:1.6; font-size:0.9em; margin-top:8px;">' + escHtml(d.content) + '</div>';
+      html += '</div></div>';
+      addMsg('system', html, true);
+    });
+
     evtSource.addEventListener('phase', function(e) {
       const d = JSON.parse(e.data);
       const labels = {planning: 'Planning', coding: 'Coding', testing: 'Testing', post_test: 'Post-Test'};

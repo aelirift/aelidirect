@@ -868,7 +868,15 @@ async def direct_stream(message: str, project_dir: str):
                             {"role": "user", "content": _review_input},
                         ], None, 0.3,
                     )
-                    _td_review_text = extract_response(_review_raw)["content"]
+                    _td_review_raw = extract_response(_review_raw)["content"]
+                    # Strip hallucinated tool calls and think blocks from TD output
+                    import re as _re
+                    _td_review_text = _re.sub(r'<think>[\s\S]*?</think>', '', _td_review_raw)
+                    _td_review_text = _re.sub(r'\[TOOL_CALL\][\s\S]*?\[/TOOL_CALL\]', '', _td_review_text)
+                    _td_review_text = _td_review_text.strip()
+                    if len(_td_review_text) < 50:
+                        _log.warning(f"[pipeline] TD REVIEW produced no useful output. Raw length={len(_td_review_raw)}, cleaned={len(_td_review_text)}")
+                        _td_review_text = f"TD review failed to produce valid output (model outputted tool calls instead of review text). Raw: {_td_review_raw[:500]}"
                     yield sse_event("td_review", {
                         "status": "complete",
                         "review": _td_review_text,

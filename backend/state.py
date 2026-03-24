@@ -276,5 +276,7 @@ TODO_TD_REVIEW_PROMPT = (
     "STATUS: PARTIAL — completed with errors, missing pieces, or workarounds\n"
     "STATUS: FAIL — not completed, fabricated results, or critical errors\n"
     "STATUS: INCOMPLETE — stopped halfway or only partial work\n\n"
-    "1-2 sentence summary after STATUS. Be specific. Don't sugarcoat."
+    "1-2 sentence summary after STATUS. Be specific. Don't sugarcoat.\n\n"
+    "OUTPUT FORMAT: Plain markdown only. No <think> blocks. No [TOOL_CALL] blocks. "
+    "No code execution. Just write your review as text."
 )

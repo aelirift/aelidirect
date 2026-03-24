@@ -283,12 +283,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
         # Docs root — branch docs when editing platform, prod docs otherwise
         _docs_root = BRANCH_ROOT if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_ROOT
 
-        # Site map — agent's primary orientation (compact file/function tree)
-        site_map_path = _docs_root / "SITE_MAP.md"
-        if site_map_path.exists():
-            system_prompt += "\n\n[SITE MAP]\n" + site_map_path.read_text()
-
-        # SPEC — what the project does
+        # SPEC only — SITE_MAP dropped (auto-generated is unreliable, prompt has hardcoded file list)
         spec_path = _docs_root / "SPEC.md"
         if spec_path.exists():
             system_prompt += "\n\n[PROJECT SPEC]\n" + spec_path.read_text()

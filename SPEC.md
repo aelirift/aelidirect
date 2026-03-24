@@ -1,306 +1,362 @@
 <think>
-The user wants me to create a SPEC.md file for the aelidirect project based on the provided source code. Let me analyze the code to understand what this project does.
+The user wants me to generate a SPEC.md document for the aelidirect project based on the source code provided. Let me analyze the codebase to understand:
 
-From the files provided:
-1. `backend/tools.py` - File system tools for the LLM (list_files, read_file, edit_file, patch_file, grep_code, read_project, etc.) with caching
-2. `backend/direct_todo.py` - Todo list and heartbeat management
-3. `backend/llm_client.py` - LLM client supporting OpenRouter and MiniMax
-4. `backend/pod.py` - Pod management for containerized deployments
+1. What the project is
+2. How it works
+3. Features organized by category
+4. Tech stack
+5. How to run it
+
+Let me go through the code systematically.
+
+The project appears to be called "aelidirect" (or "aelimini" in some places), which is a standalone AI agent platform. Let me analyze each component:
+
+**Core Architecture:**
+- Backend: FastAPI-based Python server
+- Frontend: Single HTML file (index.html)
 
 
-5. `backend/test_agent.py` - Two-phase testing system (plan then run)
-6. `backend/constants.py` - Configuration and constants
-7. `frontend/index.html` - The UI
+- Two-server setup with a production server on port 10100 and a branch server on port 10101 for development
+- Branch protection mechanism where agents work on isolated copies before deploying changes to production
 
-So aelidirect is an AI-driven development platform where an agent can build projects, run tests, deploy them as containers, and maintain a todo list with heartbeat monitoring. The system has file operations, AI agent capabilities, testing infrastructure, and deployment tools all integrated into a web frontend.
+**Key Files:**
+- `app.py`: Main FastAPI application with routes
+- `pipeline.py`: The agent pipeline (main loop)
+- `state.py`: State management
+- `tools.py`: LLM tools (file operations, etc.)
+- `direct_todo.py`: Todo list management
+- `heartbeat.py`: Scheduled task execution
+- `pod.py`: Container management (podman)
+- `llm_client.py`: LLM API client
+- `test_agent.py`: Testing system
+- `docs.py`: Auto-documentation
+- `td.py`: Technical Director review
+- `history.py`: Conversation history
+- `platform_routes.py`: Branch/prod management
 
-The test agent works in two phases—it plans tests based on the code and context, then executes them through a fix loop that handles failures. The platform supports branching for testing, can spin up containers with health checks, and includes a TD review system. It's built with FastAPI on the backend and a custom frontend, using OpenRouter and MiniMax for AI capabilities, and manages projects in isolated directories with version tracking.
-</think>
+**Features:**
+The system has file and code tools for reading, editing, and searching files, system tools for bash commands and git operations, memory management for saving and loading data, project management capabilities, and a testing framework with planning and execution phases.
 
-```markdown
-# aelidirect — Project Specification
+Now I'm looking at the pod system that handles containerized execution, the frontend interface with its sidebar and todo management, the test-driven review process, the platform self-editing setup with separate branch and production directories, and the heartbeat scheduler for automated task execution. I should also verify the configuration state and provider setup in state.py.
 
-## Overview
-
-aelidirect is an autonomous AI-driven development platform that lets you build, test, and deploy software by conversing with an agent. You describe what you want in plain language; the agent reads your codebase, writes code, runs tests, fixes failures, and deploys the result to a live container. The platform is itself built on the same toolchain it offers to users — aelidirect can self-edit, self-test, and self-deploy.
-
-The system operates in two distinct environments: **prod** (the live server at `aelidirect/`) and **branch** (a parallel workspace at `/home/aeli/projects/aelidirect_branch/`). Changes are developed on the branch, tested there, and only merged to prod on explicit deploy. This allows zero-risk experimentation on the platform's own source code.
-
----
-
-## How It Works
-
-### Agent Loop
-
-The core loop is a tool-use LLM. The agent receives a user message, decides which tools to call (read files, write files, run commands), executes those tools locally, and feeds the results back into the LLM context. The loop repeats until the task is complete or a turn limit is reached (150 turns by default).
-
-Tool calls are defined as JSON schemas sent to the LLM at each request. When the LLM responds with a tool call, the backend executes it and returns the output as a plain text result. This happens entirely on the local machine — the LLM never executes code itself.
-
-### Branch/Prod Architecture
-
-```
-User → Frontend (index.html)
-         ↓
-      FastAPI backend (app.py)
-         ↓
-    ┌─────┴─────┐
- prod          branch
- (live)        (testing)
- aelidirect/   /home/aeli/projects/aelidirect_branch/
-```
-
-- **Prod** serves the live UI and runs the agent for all projects.
-- **Branch** is a mirror of the prod source files (platform source code only) plus per-project data (todos, conversations, memory). Platform source edits go to branch; project data lives in both.
-- `branch-wipe` copies prod source files into branch, resetting the branch to match prod.
-- `branch-deploy` copies changed platform source files from branch back to prod, then restarts the server.
-
-### Dual File Cache
-
-The tools module maintains two in-memory caches per platform file:
-
-- **main cache** — reflects prod files (source of truth)
-- **branch cache** — reflects branch edits (diverges from prod)
-
-For non-platform projects, only the main cache is used. On successful deploy, the branch cache is copied into the main cache. On wipe, the main cache is copied into the branch cache. This lets the agent see its own edits while keeping prod and branch logically separate.
-
-### Todo List and Heartbeat
-
-Every project has a persistent todo list stored as JSON in `backend/.direct_todos/{project_name}.json`. Users (or the agent) can add tasks, mark them attempted or done, and attach results. The heartbeat system periodically wakes up, picks the next pending todo, and runs it through the agent pipeline automatically — turning the platform into a background autopilot.
-
-Heartbeat is configurable per project: interval (minutes), enable/disable, and a history of the last 50 runs with results and timestamps.
-
-### TD Review
-
-When a todo completes, a Test-Driven Review step analyzes the task, the agent's result, and the recent conversation history (last 30 conversations, up to 400k characters). The LLM produces a structured review that gets stored back into the todo record. This provides an auditable quality gate on every completed task.
-
----
-
-## Features
-
-### Core Agent
-
-- **Chat pipeline** — User message → agent loop → streaming SSE response. The agent calls tools in a loop until done or turn limit.
-- **Tool-use LLM** — All agent capabilities are exposed as tools defined in JSON schemas. The LLM chooses which to call based on the current context.
-- **Turn tracking** — Each conversation tracks how many agent turns have been used, with a configurable maximum (default 150).
-- **Provider selection** — Supports OpenRouter and MiniMax. Users pick the active provider via the config UI.
+Looking at the prompt structure, I'm seeing the agent gets loaded with project specifications, context maps, data flows, site maps, and conversation history to guide its behavior. The frontend appears to be built with a dark theme and uses server-sent events to stream updates in real-time, which I should document in the spec before creating the markdown file.` blocks to 1-line summaries, replacing stale file reads with `(stale read — file patched later)`, trimming confirmatory bash output (`exit code: 0`), and truncating `old_text` in `patch_file` args |
+| **Turn budget** | Coding phase caps at 150 tool-call turns; phase transitions happen automatically |
+| **Context injection** | Every conversation receives SITE_MAP.md, SPEC.md, and long-term memories in the system prompt |
 
 ### File Tools
 
-| Tool | What it does |
-|------|-------------|
-| `list_files` | Lists all files and directories in a path with sizes. |
-| `read_file` | Reads a file from disk. Returns from cache if the file hasn't changed on disk. Large files are truncated with the last 20 lines appended. |
-| `edit_file` | Creates a new file or fully rewrites an existing file. |
-| `patch_file` | Finds an exact string in an existing file and replaces it. The old text must match byte-for-byte; the tool provides helpful error messages (whitespace mismatch, ambiguous match, missing text) to guide the LLM toward correct usage. |
-| `read_file_tail` | Reads the last N lines of a file. Detects truncation signs: HTML files missing closing tags, code files ending mid-statement. |
-| `read_lines` | Reads a specific line range (1-indexed, inclusive). Automatically adds ±20 lines of padding to reduce follow-up reads. |
-| `grep_code` | Case-insensitive search across all project files. Returns file:line:content for each match, capped at 30 results. |
-| `read_project` | Reads all source files in one call. If the total fits within the budget (100k chars), it returns everything concatenated. If over budget, it returns a size-sorted file listing so the agent can choose specific files. |
+| Tool | Behavior |
+|---|---|
+| `read_file` | Returns full file content from an in-memory cache (cache invalidated by disk mtime). Files over 16k chars are truncated with a tail preview and a warning if the truncation looks like a truncation mid-tag or mid-statement |
+| `patch_file` | Targeted edit: finds exact `old_text` and replaces it with `new_text` once. On no match, shows the nearby context to help the LLM recover. On multiple matches, asks for more context |
+| `edit_file` | Full file overwrite or create-new-file. Use for creating files; `patch_file` for all modifications |
+| `read_file_tail` | Shows the last N lines of a file with line numbers; detects and warns about truncation, missing closing tags, and mid-statement cuts |
+| `read_lines` | Range read with ±20 lines of padding to reduce follow-up reads |
+| `grep_code` | Case-insensitive pattern search across all project files, returns file:line:content |
+| `read_project` | Reads all source files at once if under 100k chars budget; otherwise returns a size-sorted file listing plus auto-included SPEC.md/CONTEXT_MAP.md |
+| `list_files` | Directory listing with file/dir kind and size |
 
 ### System Tools
 
-- **Safe path enforcement** — All file tools reject access to paths outside the project directory or known safe symlink roots. This prevents the agent from accidentally writing outside the project.
-- **Path normalization** — Symlinks are resolved only on the target side, not the project side, so that symlinked project directories (like `aelidirect_platform`) are accessible without triggering the safe-path guard.
-- **File caching** — A dual cache (main + branch) with mtime tracking avoids redundant disk reads. Cache entries are cleared on project wipe/deploy.
+| Tool | Behavior |
+|---|---|
+| `bash` | Runs shell commands with 60s timeout and cwd set to the project directory |
+| `git_status`, `git_diff`, `git_log`, `git_commit` | Inline version control. Auto-initializes a git repo on first status call |
+| `http_check` | Makes a GET request to the project's live pod URL and returns status + body preview |
 
 ### Memory
 
-- **Conversation history** — Stored per project in `backend/.direct_conversations/`. Capped at 50 conversations, with a token budget of 50,000 characters. Older conversations are summarized in batches of 10.
-- **Long-term memory** — Stored in `backend/.direct_memory/{project_name}/`. The agent can write and read memory entries that persist across sessions.
-- **Todo results** — Completed todos store their full result (up to 10,000 chars) and a `result_status` (success, failure, partial) that is computed by keyword analysis of the output.
+| Tool | Behavior |
+|---|---|
+| `memory_save` | Saves a named markdown note to `.direct_memory/{project}/{key}.md` |
+| `memory_load` | Retrieves a named note by key |
+| `memory_list` | Lists all saved note keys |
 
 ### Project Management
 
-- **Multi-project** — All projects live under `aelidirect/projects/`. Each project has its own directory, `project_env.md` metadata file, todo list, conversation history, and memory.
-- **Project init** — New projects are scaffolded with a `README.md`, a FastAPI starter (`main.py`), and a `project_env.md` with project identity and tech stack.
-- **Project rename** — Updates the project name in `project_env.md` and the project directory.
-- **Project env metadata** — `project_env.md` records project name, directory, tech stack, OS, and Python version. Can include arbitrary extra key-value pairs.
+| Feature | Description |
+|---|---|
+| **Project init** | `init_project_dir()` creates README.md, main.py (FastAPI starter), and project_env.md |
+| **project_env.md** | Per-project metadata: name, tech stack, OS, Python version, pod port, deploy version |
+| `rename_project` | Updates project name in project_env.md |
+| **Multi-project sidebar** | Frontend lists all projects in `.projects/`; switch between them via sidebar |
+| **Auto-port allocation** | `get_available_port()` checks the JSON port registry, podman active ports, and OS socket availability before assigning |
 
 ### Testing
 
-aelidirect includes a built-in Test Agent with a **two-phase** automated testing system:
+aelidirect has a **two-phase automated test system** driven by `test_agent.py`:
 
-#### Phase 1 — Plan
+**Phase 1 — Plan:** The test agent reads all platform source files in one batch (~37k chars), sends them to the LLM with a scope and context, and receives a structured JSON test plan. The plan includes `setup` arrays (precondition creation via API calls) and `steps` arrays for each test case. Test types: `api` (httpx HTTP calls), `browser` (Playwright DOM interaction), `unit` (Python import + function call).
 
-The Test Agent loads all platform source files as a single concatenated batch (bypassing dozens of individual read calls). It sends this batch, the test scope, and conversation context to the LLM and asks for a structured JSON test plan. Each test case includes:
+**Phase 2 — Run:** Each test case executes in order:
+1. Setup steps run first (create todos, enable heartbeat, set config)
+2. Test steps run and assertions are evaluated
+3. Results are collected: `{id, name, type, status, details[], assertions[]}`
 
-- `id` — unique identifier
-- `name` — human-readable description
-- `type` — `api`, `browser`, or `unit`
-- `setup` — array of steps that create preconditions before the test runs (e.g., create a todo via API before testing the heartbeat countdown)
-- `steps` — actual test actions (HTTP calls, Playwright actions, direct Python imports)
-- `expected` — what correct behavior looks like
-- `assertions` — specific checks to verify
+**Test-fix loop:** If any tests fail, failures are formatted as a message and sent back through the chat pipeline. The agent receives: which test failed, what the assertion expected, and the actual response. It fixes the code and tests are re-run. This loops up to **2 times** by default, or until all tests pass.
 
-**Important:** Setup steps are separate from test steps. The Test Agent will not assume state exists — it creates it via the API first. For example, to test the heartbeat countdown UI, it first POSTs to create a todo and enables the heartbeat, then checks the UI.
+### Deployment
 
-#### Phase 2 — Run
+| Feature | Description |
+|---|---|
+| **Pod deployment** | `spin_up_pod()` manages the full container lifecycle: force-destroy old pod → build image (Containerfile auto-generated per app type) → create podman pod → health-check until HTTP 200 |
+| **Auto Containerfile** | `generate_containerfile()` detects app type (FastAPI, Flask, static) and produces a matching Dockerfile with appropriate base image and CMD |
+| **App type detection** | `detect_app_type()` reads project files to classify as fastapi, flask, python-http, or static |
+| **Port allocation** | Pods run on host ports in range 11001–11099. `get_available_port()` uses three-layer checking: JSON registry, podman `pod ls`, OS socket bind |
+| **Pod naming** | Pods are named `aelimini-{project_name}` (stable across deploys — old pod is always destroyed before new one starts) |
+| **Health check** | Polls `GET /health` up to 15 times with 2s delay before declaring the pod healthy |
+| **Crash detection** | On health failure, container logs and `podman inspect` state are captured for diagnosis |
 
-The Test Agent executes each test case:
+### Frontend (index.html)
 
-- **API tests** — Uses `httpx.AsyncClient` to make HTTP requests. Checks status codes and specific JSON fields (including special matchers like `__exists__`, `__gt_zero__`, and type checking).
-- **Browser tests** — Uses Playwright to drive a real browser. Supports click, fill, wait_for_selector, check_text, check_visible, check_count, screenshot, and JavaScript `evaluate`. Screenshots are saved to `backend/.test_screenshots/`.
-- **Unit tests** — Directly imports Python modules and calls functions with provided arguments. Supports special matchers (`__truthy__`, `__falsy__`, `__not_none__`, `__contains__`, `__type__`).
+| Feature | Description |
+|---|---|
+| **Sidebar project list** | Lists all projects from `.projects/`; click to switch active project |
+| **Chat view** | SSE-powered real-time stream; shows planning output, thinking, tool calls, tool results, final response |
+| **Pod URL bar** | When a project is deployed, shows the pod URL with an "Open" button |
+| **Right panel** | Tabbed: Todo list + Heartbeat scheduler |
+| **Config view** | LLM provider selection (OpenRouter / MiniMax), per-provider API key + base URL + model selection |
+| **Branch testing bar** | Shows branch vs. prod status, changed files, and Wipe/Deploy/Test buttons |
+| **Heartbeat progress** | Live polling of `/api/platform/heartbeat-progress` shows current todo, step name, turn count, elapsed time |
+| **Todo detail modal** | Click any todo to see: status, result badge, timeline, schedule info, extracted issues, TD review |
+| **Markdown rendering** | `renderMarkdownSimple()` converts bold, code blocks, headings, lists, and inline code in agent responses and TD reviews |
+| **Auto-scroll** | Messages area scrolls to bottom on new content |
 
-#### Test-Fix Loop
+### TD Review (Technical Director)
 
-When tests fail, the Test Agent formats the failures as a structured message and **sends them back through the chat pipeline** — the same flow as if a user pasted the error. The agent reads the failures, fixes the code, and the tests run again. This repeats up to 3 times (configurable).
+After every conversation that used tools, the pipeline runs a **TD review** that synthesizes evidence from the full arc:
 
-The loop preserves full context across iterations: the original test plan, all failure details, the agent's fix response, and the updated source batch for re-testing.
+1. **Input:** Original task → agent's plan → final response → test evidence (iteration count, per-test status, failure details)
+2. **LLM call:** A separate LLM call with the `TODO_TD_REVIEW_PROMPT` analyzes the agent's work
+3. **Output:** A `STATUS: PASS / PARTIAL / FAIL / INCOMPLETE` verdict with structured sections: Bugs Found, Bugs Fixed, Bugs Missed, Features Built, Agent Behavior, Patterns, Recommendations
+4. **Storage:** Reports are saved to `.td_reports/{timestamp}.md` and available via the TD analysis API
 
-#### TD Review Integration
+The TD review is fed **test evidence** from the test agent: if tests failed and the agent fixed them, that chain is visible to the reviewer. If tests still fail after max iterations, the reviewer sees the exact assertion failures.
 
-TD review incorporates test evidence by analyzing the last 30 conversations (up to 400k characters of context). The review evaluates whether the agent's result matches the original intent, whether failures were addressed, and provides a structured verdict on the completed work.
+### Todo & Heartbeat Scheduler
 
-### Deployment (Pods)
+| Feature | Description |
+|---|---|
+| **Todo CRUD** | Add, update, delete, get individual todos per project in `.direct_todos/` |
+| **Todo categories** | `feature`, `debug`, `question`, `refactor` |
+| **Status lifecycle** | `pending` → `attempted` → `done` (with result classification: success/failure/partial) |
+| **Duration tracking** | Start time recorded on first attempt; completed-at and duration_secs computed |
+| **Heartbeat scheduler** | Background asyncio task runs every 30s; checks heartbeat config per project |
+| **Auto-execution** | `heartbeat.enabled = true` + interval triggers `_execute_todo_via_chat()` — same chat pipeline the browser uses |
+| **Run Now** | Manual trigger via `/api/direct/heartbeat/{project}/run` — executes the next pending todo immediately |
+| **Queue position** | Pending todos show estimated run time based on queue position and heartbeat interval |
+| **Result classification** | `_classify_result()` scans output for `error`, `failed`, `traceback`, `exception` → failure; `partial`, `warning`, `but` → partial |
 
-aelidirect deploys generated projects as **podman containers** managed as pods. The deployment lifecycle is:
+### Documentation Regeneration
 
-1. **Destroy** — Force-kill any existing pod for this project, wait up to 20s for the port to be released, then fall back to a targeted kill if the port is still held.
-2. **Build** — Auto-detect the app type (FastAPI, Flask, static HTML, or generic Python HTTP) and generate a `Containerfile`. Run `podman build`. A `requirements.txt` in the project is automatically installed.
-3. **Start** — Create a podman pod with the port mapped, then run the container inside it.
-4. **Health check** — Poll the container's `/health` endpoint up to 15 times with 2s delays, waiting for HTTP 200. If the container crashes immediately, the error is captured.
-5. **Return** — On success: pod name, port, and version. On failure: the phase where it failed, the container logs, and the container state.
+After every conversation, `docs.py` runs four parallel LLM calls to regenerate documentation from the current source:
 
-**Port allocation** — Ports are allocated from `11001–11098`. The system tracks allocations in `.ports.json`, checks what podman is actually using, and verifies the port is free at the OS socket level before assigning.
+| Doc | Content |
+|---|---|
+| `SPEC.md` | Project overview, feature list, tech stack, run instructions |
+| `CONTEXT_MAP.md` | File structure, API endpoints (method/path/handler), tool definitions, data formats |
+| `DATA_FLOW.md` | Chat flow, tool loop, memory system, heartbeat, deployment, branch/prod sync |
+| `SITE_MAP.md` | Compact file tree with per-function descriptions — compact enough to fit in every system prompt |
 
-**Pod naming** — Pods are named `aelimini-{project_name}` (project name sanitized to `[a-zA-Z0-9_-]`, max 40 chars). This means the same project always gets the same pod — redeploying an existing project simply destroys and recreates that pod.
+Regeneration runs as a background task via `loop.create_task(_regenerate_docs())`.
 
-### Frontend
+### Diagnostics & Logging
 
-The UI is a single self-contained `index.html` with no build step. Key views:
-
-- **Chat view** — Message bubbles (user, assistant, system, tool, error, success), a sticky progress bar with pulsing dot and elapsed time, a chat input, and a pod URL bar that shows when a project is live.
-- **Right panel** — Tabbed between Todo list and Heartbeat controls. Shows pending/completed todos with status icons, durations, attempt counts, and result previews. Clicking a todo opens a detail modal with timeline, schedule info, agent result, extracted issues, and TD review.
-- **Config view** — LLM provider configuration (API key, base URL, model) with per-provider sections. Active provider is highlighted.
-- **Project sidebar** — Lists all projects. Clicking one switches the chat context to that project. New project button scaffolds a fresh project.
-- **Branch testing bar** — When on prod, shows whether the branch has changes newer than prod. Provides "Run tests", "Deploy to prod", and "Wipe branch" buttons. During heartbeat execution, this bar shows real-time progress (todo ID, current step, turn count, elapsed time).
+| Feature | Description |
+|---|---|
+| **Conversation history** | All sessions saved to `.direct_conversations/{project}/{timestamp}.json` |
+| **History API** | `GET /api/direct/history/{project_dir}` returns last 50 conversations with tool usage summaries |
+| **History erase** | `DELETE /api/direct/history/{project_dir}` wipes all conversations for a project |
+| **Conversation summarizer** | Old conversations (beyond last 10) are batch-summarized by an LLM into one-line summaries stored in the JSON file |
+| **Pod logs** | `get_container_logs()` streams podman logs via the diagnostics tool interface |
+| **Platform routes** | Branch status, wipe, and deploy are exposed as REST endpoints |
 
 ---
 
-## Tech Stack
+## 4. Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Backend runtime | Python 3.13, FastAPI |
-| AI providers | OpenRouter, MiniMax (via HTTP API) |
-| Container runtime | podman (pods + containers) |
-| Container base image | `python:3.13-slim` |
-| Frontend | Vanilla JS + CSS, no build step |
-| HTTP client (server-side) | `httpx` (async) |
-| Browser automation | Playwright |
-| File caching | In-memory dict with mtime tracking |
-| Todo/heartbeat storage | JSON files (`backend/.direct_todos/`, `backend/.direct_heartbeats/`) |
-| Conversation storage | JSON files (`backend/.direct_conversations/`) |
-| Memory storage | JSON files (`backend/.direct_memory/`) |
-| TD reports | JSON files (`backend/.td_reports/`) |
-| Port tracking | JSON file (`backend/.ports.json`) |
-| Config | JSON file (`backend/.config.json`) |
+|---|---|
+| **Backend framework** | FastAPI (Python 3.13) |
+| **LLM client** | httpx → OpenRouter / MiniMax API |
+| **Frontend** | Vanilla JS, single `index.html`, CSS |
+| **Real-time** | Server-Sent Events (SSE) |
+| **Testing** | httpx (API), Playwright (browser), importlib (unit) |
+| **Container runtime** | podman + podman pods |
+| **Persistent storage** | JSON files on disk (`.direct_*` directories) |
+| **Platform self-editing** | Dual-server: prod (10100) + branch (10101) |
+| **Config** | `.config.json` (API keys, model selection) |
 
 ---
 
-## How to Run
+## 5. How to Run
 
 ### Prerequisites
 
-- Python 3.13+
-- podman installed and the podman socket enabled (`systemctl --user enable --now podman.socket`)
-- An OpenRouter or MiniMax API key
-
-### Start the server
-
 ```bash
-cd aelidirect
-python -m uvicorn backend.app:app --host 0.0.0.0 --port 10100 --reload
+# System
+python3 --version   # 3.13 or compatible
+pip install fastapi uvicorn httpx
+podman --version
+
+# Python dependencies (see requirements.txt or install manually)
+fastapi, uvicorn, httpx, playwright (for test agent browser tests)
+playwright install chromium  # if using browser tests
 ```
 
-- **Prod** serves on port `10100` (default).
-- **Branch** serves on port `10101` (if started separately on the branch checkout).
-
-### First-time setup
-
-1. Open the UI at `http://localhost:10100`
-2. Click the **Config** button in the sidebar
-3. Select a provider (OpenRouter or MiniMax)
-4. Enter your API key, base URL, and model name
-5. Click **Activate** — this becomes the active provider for all agent calls
-
-### Create a project
-
-1. Click **+ New Project** in the sidebar
-2. Enter a project name (e.g., `my-api`)
-3. The project is scaffolded with `main.py` (FastAPI) and `README.md`
-4. The chat context switches to the new project
-
-### Build something
-
-Type in the chat, e.g.:
+### Project Layout
 
 ```
-Create a REST API for managing a todo list with SQLite persistence.
-Include CRUD operations: create, read all, read one, update, delete.
-Add a /health endpoint.
+aelidirect/
+├── backend/
+│   ├── app.py              # FastAPI app + all route registration
+│   ├── pipeline.py         # Agent loop: plan → code → test → TD review
+│   ├── tools.py            # LLM tool definitions + executors
+│   ├── test_agent.py       # Two-phase test system
+│   ├── heartbeat.py        # Todo scheduler + executor
+│   ├── direct_todo.py      # Todo CRUD + heartbeat config
+│   ├── pod.py              # Container build + run + health check
+│   ├── state.py            # Global config + provider state
+│   ├── llm_client.py       # Raw LLM API calls
+│   ├── docs.py             # Auto-documentation regeneration
+│   ├── td.py               # Technical Director analysis
+│   ├── history.py          # Conversation persistence
+│   ├── platform_routes.py  # Branch/prod management
+│   ├── constants.py        # All shared constants
+│   └── ...
+├── frontend/
+│   └── index.html          # Full SPA frontend
+├── projects/               # User project directories
+├── SPEC.md, CONTEXT_MAP.md, DATA_FLOW.md, SITE_MAP.md  # Auto-generated
+└── .config.json            # API keys, model selection
 ```
 
-The agent will read the project files, write the code, and respond with a summary. To deploy:
-
-```
-Deploy this project
-```
-
-The server will build a container, start a pod, allocate a port, and the pod URL will appear in the UI.
-
-### Run tests manually
+### Running the Production Server
 
 ```bash
 cd backend
-python test_agent.py "heartbeat countdown" --context "user reported the countdown shows 0 instead of the actual time"
+uvicorn app:app --host 0.0.0.0 --port 10100 --reload
 ```
 
-Options:
-- `--phase plan` — only generate the test plan (no execution)
-- `--no-fix` — run tests once without the fix loop
-- `--project <name>` — test a specific project (default: `aelidirect_platform`)
+Then open `http://localhost:10100` in a browser.
 
-### Test-fix loop
-
-By default, if tests fail, the Test Agent sends the failures through the chat pipeline (the same pipeline a user uses). The agent reads the failures, attempts a fix, and the tests run again. This happens up to 3 times before giving up.
+### Running the Branch Server
 
 ```bash
-# See what the full loop produces
-python test_agent.py "chat pipeline" --no-fix  # one-shot
-python test_agent.py "chat pipeline"          # with fix loop
+# In a separate terminal
+cd backend
+uvicorn app:app --host 0.0.0.0 --port 10101
 ```
 
-### Deploy branch changes to prod
+The branch server (10101) and prod server (10100) can run simultaneously. The frontend's branch bar automatically detects which server it's talking to.
 
-On the prod server, the branch testing bar will show when `aelidirect_branch/` has source changes newer than prod. Click **Deploy to prod** to copy those changes into the prod directory and restart the server.
+### Configuration
 
-Click **Wipe branch** to discard branch changes and sync from prod (useful after a failed experiment).
+On first load, go to **Config** in the frontend sidebar and enter:
 
-### Heartbeat / autopilot
+- **Provider:** `openrouter` or `minimax`
+- **API Key:** Your key
+- **Base URL:** `https://openrouter.ai/api/v1` or `https://api.minimax.chat`
+- **Model:** e.g. `anthropic/claude-3.5-sonnet`
 
-1. In the right panel's **Heartbeat** tab, set the interval (minutes)
-2. Toggle the switch to **ON**
-3. Add todos to the **Todo** tab
-4. The heartbeat will automatically pick up pending todos and run them through the agent in the background. Progress appears in the branch testing bar at the top of the chat.
+Click a provider's **Select** button to activate it.
+
+### Running a Project
+
+1. Type a message in the chat (e.g. "Build a REST API for a todo list")
+2. The agent plans, writes code, and deploys it into a podman pod
+3. Watch the live SSE stream: planning → thinking → tool calls → results → pod URL
+4. Click **Open** to see your running app
+5. After the conversation, testing runs automatically and TD review is generated
+
+### Running the Test Agent (CLI)
+
+```bash
+cd backend
+python test_agent.py "heartbeat countdown" --context "User reported countdown doesn't update"
+
+# Or just generate the test plan without running:
+python test_agent.py "chat pipeline" --plan-only
+```
+
+### Running Todo / Heartbeat (scheduled)
+
+Heartbeat runs automatically when `enabled = true` on a project's heartbeat config. To trigger manually:
+
+```bash
+curl -X POST http://localhost:10100/api/direct/heartbeat/{project_dir}/run
+```
+
+### Deploying Branch to Production
+
+In the frontend's branch bar (visible when branch has newer files):
+1. Click **Test** to run the automated test suite against the branch
+2. If tests pass, click **Deploy** to copy branch files → prod and restart the production server
+3. Click **Wipe** to reset the branch to match production (no changes deployed)
 
 ---
 
-## Key Constants (from `constants.py`)
-
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| `PROD_PORT` | `10100` | Prod server port |
-| `BRANCH_PORT` | `10101` | Branch server port |
-| `POD_PORT_RANGE` | `11001–11098` | Dynamic pod port allocation |
-| `CONTAINER_INTERNAL_PORT` | `8000` | Container internal port (all pods) |
-| `MAX_ACTION_TURNS` | `150` | Max agent turns per conversation |
-| `MAX_TEST_FIX_ITERATIONS` | `3` | Max test-fix loop iterations |
-| `READ_PROJECT_BUDGET` | `100,000 chars` | Budget for full project reads |
-| `LLM_TIMEOUT` | `180s` | Per-call LLM timeout |
-| `LLM_STREAM_TIMEOUT` | `600s` | Max streaming session |
-| `HEALTH_CHECK_RETRIES` | `15` | Health check polling attempts |
-| `HEALTH_CHECK_DELAY` | `2.0s` | Delay between health checks |
-| `CONTAINER_BUILD_TIMEOUT` | `120s` | Podman build timeout |
+*SPEC.md is auto-generated by the platform itself after every conversation. Last regenerated: after the most recent chat session.*
 ```
+</think>
+
+```markdown
+# aelidirect -- Project Specification
+
+## 1. Overview
+
+aelidirect is a self-hostable AI coding agent platform that lets you describe what you want to build in plain English and watch it happen — code written, tested, and deployed into a live podman container, all in one session. It runs as a FastAPI backend with a single HTML frontend and communicates with any OpenRouter- or MiniMax-compatible LLM via a clean REST/tool-call interface. Unlike generic chat assistants, every aelidirect conversation operates inside a real project directory with full file-system access, persistent memory, scheduled task queues, and an automated test-fix loop that catches regressions before they ship.
+
+The platform also edits *itself*: the aelidirect branch server (port 10101) is a fully isolated copy of the platform that the agent modifies directly. When you deploy the branch to production (port 10100), the same pipeline that builds your projects deploys your own infrastructure.
+
+---
+
+## 2. How It Works
+
+### The Message Flow
+
+A user types a message in the frontend. The browser POSTs it to `/api/direct/start`, which creates or resumes a project directory, then returns an SSE (Server-Sent Events) stream URL. The browser opens that URL with `EventSource` and receives a real-time firehose of structured events:
+
+```
+planning → turn → thinking → tool_call → tool_result → ... → response → test_phase → td_review → done
+```
+
+### The Agent Loop
+
+The backend pipeline runs in three phases per conversation:
+
+**Planning phase** — The LLM receives the user's message with **no tools enabled** and must respond with a text plan. This forces structured thinking before any code is touched.
+
+**Coding phase** — The LLM receives the full tool definition set and operates in a tool-call loop (up to 150 turns):
+1. LLM decides: respond in text, or call a tool?
+2. If tool: the backend executes it and appends the result to the message history
+3. Loop continues until the LLM gives a final text response
+
+**Post-test phase** — After the final response, the pipeline transitions to testing automatically (see Test Agent below).
+
+### Platform Self-Editing
+
+When the active project is `aelidirect_platform`, the pipeline redirects file writes from the prod path to `BRANCH_ROOT` (the branch server's working directory). The agent edits a live copy of the platform without touching production. After the conversation, docs are regenerated and the branch server is restarted so it reflects the new edits immediately.
+
+### Dual-Server Architecture
+
+| Server | Port | Role |
+|---|---|---|
+| Production | 10100 | Live aelidirect instance — stable |
+| Branch | 10101 | Isolated dev copy — agent's workspace |
+
+Branch status is visible in the frontend. You can wipe the branch back to prod state, or deploy branch changes to production through explicit UI actions.
+
+---
+
+## 3. Features
+
+### Core Agent
+
+| Feature | Description |
+|---|---|
+| **Planning turn** | First LLM call has zero tools — forces a text plan that is shown to the user and appended to context |
+| **Tool-call loop** | LLM alternates between text responses and tool calls; each result feeds back into the next LLM call |
+| **Long-term memory** | `memory_save` / `memory_load` / `memory_list` tools persist named notes across sessions in `.direct_memory/` |
+| **Conversation history** | Last 5 conversations are injected into the system prompt; older ones are summarized and stored on disk |
+| **Stale-context trimmer** | `_trim_messages()` compresses message history by: stripping `

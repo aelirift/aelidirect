@@ -119,7 +119,18 @@ For example, to test a countdown timer you must FIRST:
 - Wait for the UI to update
 Only THEN can you check if the countdown shows up.
 
-Do NOT assume any state exists. Always create the conditions you need in setup.
+IMPORTANT SETUP RULES:
+- The project "aelidirect_platform" ALWAYS exists. Do NOT try to create it.
+- Use it directly in API paths: /api/direct/todos/aelidirect_platform
+- There is NO "POST /api/projects" endpoint. Projects are created via POST /api/direct/start.
+- For setup, use ONLY these endpoints:
+  POST /api/direct/todos/{project_dir} {"task":"...", "category":"feature"} — create todo
+  PUT /api/direct/todos/{project_dir}/{id} {"status":"...", "result":"..."} — update todo
+  DELETE /api/direct/todos/{project_dir}/{id} — delete todo
+  POST /api/direct/heartbeat/{project_dir} {"enabled":true, "interval_minutes":5} — configure heartbeat
+  GET /api/direct/heartbeat/{project_dir} — read heartbeat state
+- For browser tests, navigate to http://127.0.0.1:{port}/ and interact with the UI.
+- Do NOT invent endpoints that don't exist.
 
 Return ONLY valid JSON in this format:
 {
@@ -155,7 +166,7 @@ Use PORT_PLACEHOLDER in URLs — it will be replaced with the actual port at run
 
 Be thorough but practical. Only test things that can actually be verified programmatically.
 For browser tests, use CSS selectors that exist in the actual HTML (you have the source).
-For API tests, use actual endpoints from main.py.
+For API tests, use actual endpoints from SITE_MAP.
 For unit tests, use actual functions from the modules.
 """
 

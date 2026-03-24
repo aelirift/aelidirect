@@ -120,17 +120,16 @@ For example, to test a countdown timer you must FIRST:
 Only THEN can you check if the countdown shows up.
 
 IMPORTANT SETUP RULES:
-- The project "aelidirect_platform" ALWAYS exists. Do NOT try to create it.
-- Use it directly in API paths: /api/direct/todos/aelidirect_platform
-- There is NO "POST /api/projects" endpoint. Projects are created via POST /api/direct/start.
-- For setup, use ONLY these endpoints:
+- The context tells you the active project name. Use it in all API paths. Do NOT create new projects.
+- There is NO "POST /api/projects" endpoint.
+- For setup, use ONLY these endpoints (replace {project_dir} with the active project name):
   POST /api/direct/todos/{project_dir} {"task":"...", "category":"feature"} — create todo
   PUT /api/direct/todos/{project_dir}/{id} {"status":"...", "result":"..."} — update todo
   DELETE /api/direct/todos/{project_dir}/{id} — delete todo
   POST /api/direct/heartbeat/{project_dir} {"enabled":true, "interval_minutes":5} — configure heartbeat
   GET /api/direct/heartbeat/{project_dir} — read heartbeat state
 - For browser tests, navigate to http://127.0.0.1:{port}/ and interact with the UI.
-- Do NOT invent endpoints that don't exist.
+- Do NOT invent endpoints that don't exist. If unsure, skip the setup step.
 
 Return ONLY valid JSON in this format:
 {

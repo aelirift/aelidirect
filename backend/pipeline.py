@@ -570,9 +570,10 @@ async def run_chat_pipeline(message: str, project_dir: str):
                         })
                         _test_context = (
                             f"Task: {msg}\n"
+                            f"Active project: {project_dir}\n"
                             f"Agent response: {_last_response_text[:1000]}\n"
-                            f"IMPORTANT: Only test the specific feature requested. "
-                            f"Do NOT test unrelated platform features."
+                            f"IMPORTANT: Test on project '{project_dir}' — use it in all API paths. "
+                            f"Do NOT create new projects. Only test the specific feature requested."
                         )
                         source_batch = await asyncio.to_thread(load_source_batch, "platform")
                         _test_plan = await plan_tests(

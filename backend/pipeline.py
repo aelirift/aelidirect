@@ -623,7 +623,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
                     # Tests failed — send detailed results
                     yield sse_event("test_feedback", {
                         "status": "failures_found", "passed": passed,
-                        "failed": len(failed), "iteration": _test_fix_iteration,
+                        "failed": failed, "iteration": _test_fix_iteration,
                         "results": _results_summary,
                     })
 

@@ -148,7 +148,11 @@ async def deploy_branch():
     deployed = []
     errors = []
 
-    for rel in PLATFORM_SOURCE_FILES:
+    # Copy source files + docs from branch → prod
+    _deploy_files = list(PLATFORM_SOURCE_FILES) + [
+        "SPEC.md", "CONTEXT_MAP.md", "DATA_FLOW.md", "SITE_MAP.md",
+    ]
+    for rel in _deploy_files:
         try:
             branch_file = BRANCH_ROOT / rel
             prod_file = PROD_ROOT / rel

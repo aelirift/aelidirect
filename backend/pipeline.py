@@ -280,13 +280,16 @@ async def run_chat_pipeline(message: str, project_dir: str):
     async def event_generator():
         system_prompt = DIRECT_AGENT_PROMPT
 
+        # Docs root — branch docs when editing platform, prod docs otherwise
+        _docs_root = project_path.parent if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_ROOT
+
         # Site map — agent's primary orientation (compact file/function tree)
-        site_map_path = PROD_ROOT / "SITE_MAP.md"
+        site_map_path = _docs_root / "SITE_MAP.md"
         if site_map_path.exists():
             system_prompt += "\n\n[SITE MAP]\n" + site_map_path.read_text()
 
         # SPEC — what the project does
-        spec_path = PROD_ROOT / "SPEC.md"
+        spec_path = _docs_root / "SPEC.md"
         if spec_path.exists():
             system_prompt += "\n\n[PROJECT SPEC]\n" + spec_path.read_text()
 
@@ -919,9 +922,10 @@ async def run_chat_pipeline(message: str, project_dir: str):
             })
             try:
                 _save_conversation(project_dir, msg, messages, test_evidence=_test_evidence)
-                # Regenerate docs in background after chat completion
-                loop = asyncio.get_event_loop()
-                loop.create_task(_regenerate_docs())
+                # Regenerate docs only on branch — prod never generates docs
+                if project_path.resolve() == BRANCH_ROOT.resolve():
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(_regenerate_docs())
                 # Restart branch if code changed but tests didn't run (no test phase triggered)
                 # If test phase ran, it already restarted the branch before testing.
                 if (project_path.resolve() == BRANCH_ROOT.resolve()

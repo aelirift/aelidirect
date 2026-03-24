@@ -281,7 +281,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
         system_prompt = DIRECT_AGENT_PROMPT
 
         # Docs root — branch docs when editing platform, prod docs otherwise
-        _docs_root = project_path.parent if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_ROOT
+        _docs_root = BRANCH_ROOT if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_ROOT
 
         # Site map — agent's primary orientation (compact file/function tree)
         site_map_path = _docs_root / "SITE_MAP.md"

@@ -801,54 +801,6 @@ button { cursor: pointer; font-family: inherit; }
   line-height: 1.6;
   color: #ccc;
 }
-.docs-modal {
-  width: 90%;
-  max-width: 900px;
-  max-height: 85vh;
-}
-.docs-tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid #2a2a4a;
-  padding: 0 20px;
-}
-.docs-tab {
-  padding: 12px 20px;
-  border: none;
-  background: none;
-  color: #666;
-  font-size: 0.9em;
-  font-weight: 600;
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.15s;
-}
-.docs-tab:hover { color: #aaa; }
-.docs-tab.active {
-  color: #26a1ff;
-  border-bottom-color: #26a1ff;
-}
-.docs-content {
-  padding: 24px;
-  overflow-y: auto;
-  flex: 1;
-  line-height: 1.7;
-  font-size: 0.92em;
-}
-.docs-content h1 { font-size: 1.3em; color: #e0e0e0; margin: 20px 0 8px; border-bottom: 1px solid #2a2a4a; padding-bottom: 6px; }
-.docs-content h2 { font-size: 1.15em; color: #26a1ff; margin: 16px 0 6px; }
-.docs-content h3 { font-size: 1em; color: #b388ff; margin: 12px 0 4px; }
-.docs-content p { margin: 6px 0; }
-.docs-content code { background: #1a1a3a; padding: 2px 6px; border-radius: 4px; font-size: 0.88em; color: #5fe88a; }
-.docs-content pre { background: #0a0a1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 0.85em; margin: 8px 0; }
-.docs-content pre code { background: none; padding: 0; }
-.docs-content ul, .docs-content ol { margin: 6px 0 6px 20px; }
-.docs-content li { margin: 3px 0; }
-.docs-content table { border-collapse: collapse; width: 100%; margin: 8px 0; }
-.docs-content th, .docs-content td { border: 1px solid #2a2a4a; padding: 6px 10px; text-align: left; font-size: 0.85em; }
-.docs-content th { background: #1a1a3a; color: #26a1ff; }
-.docs-content strong { color: #ff9966; }
-
 /* ── TD Report ────────────────────────────────────────────────── */
 #td-report-content h1, #td-report-content h2, #td-report-content h3 {
   color: #e0e0e0; margin-top: 20px; margin-bottom: 8px;
@@ -1049,9 +1001,6 @@ button { cursor: pointer; font-family: inherit; }
       <button class="sidebar-btn sidebar-btn-new" onclick="createNewProject()">
         <span>+</span> New Project
       </button>
-      <button class="sidebar-btn sidebar-btn-config" onclick="showPlatformDocs()">
-        <span>&#x1f4d6;</span> How It Works
-      </button>
       <button class="sidebar-btn sidebar-btn-config" id="sidebar-td-btn" onclick="toggleTDView()">
         <span>&#x1f4cb;</span> TD Analysis
       </button>
@@ -1074,7 +1023,6 @@ button { cursor: pointer; font-family: inherit; }
             <span class="proj-dir" id="project-bar-dir"></span>
             <button class="ctx-map-btn" onclick="showSpec(state.projectDir)">Spec</button>
             <button class="ctx-map-btn" onclick="showContextMap(state.projectDir)">Context Map</button>
-            <button class="ctx-map-btn" onclick="showSiteMap(state.projectDir)">Site Map</button>
             <button class="ctx-map-btn" onclick="eraseHistory()" style="color:#ff5555;border-color:#ff555544;">Erase History</button>
             <span class="turn-counter" id="turn-counter"></span>
           </div>
@@ -1970,31 +1918,6 @@ async function showContextMap(dirName) {
   }
 }
 
-async function showSiteMap(dirName) {
-  if (!dirName) return;
-  try {
-    const resp = await fetch('/api/platform/docs');
-    const docs = await resp.json();
-    const siteMap = docs['SITE_MAP.md'] || 'No site map generated yet.';
-
-    const backdrop = document.createElement('div');
-    backdrop.className = 'ctx-modal-backdrop';
-    backdrop.onclick = function(e) { if (e.target === backdrop) backdrop.remove(); };
-    backdrop.innerHTML =
-      '<div class="ctx-modal docs-modal">' +
-        '<div class="ctx-modal-header">' +
-          '<h3>Site Map &mdash; ' + escHtml(dirName) + '</h3>' +
-          '<button class="ctx-modal-close" onclick="this.closest(\'.ctx-modal-backdrop\').remove()">&times;</button>' +
-        '</div>' +
-        '<div class="ctx-modal-body docs-content">' +
-          '<pre>' + escHtml(siteMap) + '</pre>' +
-        '</div>' +
-      '</div>';
-    document.body.appendChild(backdrop);
-  } catch (e) {
-    alert('Failed to load site map: ' + e.message);
-  }
-}
 
 function renderMarkdown(md) {
   var html = escHtml(md);

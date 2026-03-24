@@ -251,10 +251,21 @@ Test against port {target_port} (http://127.0.0.1:{target_port})
                         continue
 
     if plan is None:
+        import logging
+        logging.getLogger("uvicorn").warning(f"[test-agent] Failed to parse test plan. Content preview: {content[:500]}")
         plan = {"error": "Failed to parse test plan", "raw": content[:2000]}
+
+    # Normalize alternate key names (LLM may use "tests" instead of "test_cases")
+    if "test_cases" not in plan:
+        for alt_key in ("tests", "test_plan", "testCases", "cases"):
+            if alt_key in plan and isinstance(plan[alt_key], list):
+                plan["test_cases"] = plan.pop(alt_key)
+                break
 
     # Validate plan has test_cases
     if "test_cases" not in plan:
+        import logging
+        logging.getLogger("uvicorn").warning(f"[test-agent] Plan missing test_cases. Keys: {list(plan.keys())}. Raw: {json.dumps(plan)[:500]}")
         plan = {"error": "Test plan missing test_cases", "raw": json.dumps(plan)[:2000]}
 
     return plan

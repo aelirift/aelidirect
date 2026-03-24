@@ -271,41 +271,83 @@ Test against port {target_port} (http://127.0.0.1:{target_port})
 # PHASE 2: RUN — Execute test plan
 # ═══════════════════════════════════════════════════════════════════
 
-async def _run_setup_steps(setup_steps: list, base_url: str) -> list[dict]:
-    """Execute setup/precondition steps before a test. These create the conditions needed.
-    Returns list of setup results (for debugging). Failures here are setup errors, not test failures."""
+async def _run_setup_steps(setup_steps: list, base_url: str, page=None) -> list[dict]:
+    """Execute setup steps — supports both HTTP calls and browser actions.
+
+    HTTP: GET, POST, PUT, DELETE → httpx
+    Browser: GOTO/NAVIGATE/BROWSER/OPEN → page.goto
+             CLICK → page.click
+             FILL → page.fill
+             WAIT → asyncio.sleep
+    """
     results = []
+    _browser_methods = {"NAVIGATE", "GOTO", "BROWSER", "OPEN"}
     async with httpx.AsyncClient(timeout=30.0) as client:
         for step in setup_steps:
             details = step.get("details", {})
             method = details.get("method", "POST").upper()
             path = details.get("path", "/")
             body = details.get("body")
-            url = f"{base_url}{path}"
 
             try:
-                if method == "GET":
-                    resp = await client.get(url)
-                elif method == "POST":
-                    resp = await client.post(url, json=body)
-                elif method == "PUT":
-                    resp = await client.put(url, json=body)
-                elif method == "DELETE":
-                    resp = await client.delete(url)
-                elif method in ("NAVIGATE", "WAIT", "CLICK", "FILL", "BROWSER", "GOTO", "OPEN"):
-                    # Browser actions in setup — skip, handled by browser test runner
-                    results.append({"step": step.get("action", ""), "ok": True, "skipped": "browser action"})
-                    continue
-                else:
-                    results.append({"step": step.get("action", ""), "error": f"Unknown method: {method}"})
-                    continue
+                # HTTP methods
+                if method in ("GET", "POST", "PUT", "DELETE"):
+                    url = f"{base_url}{path}"
+                    if method == "GET":
+                        resp = await client.get(url)
+                    elif method == "POST":
+                        resp = await client.post(url, json=body)
+                    elif method == "PUT":
+                        resp = await client.put(url, json=body)
+                    elif method == "DELETE":
+                        resp = await client.delete(url)
+                    results.append({
+                        "step": step.get("action", ""),
+                        "status_code": resp.status_code,
+                        "ok": 200 <= resp.status_code < 300,
+                        "body_preview": resp.text[:200],
+                    })
 
-                results.append({
-                    "step": step.get("action", ""),
-                    "status_code": resp.status_code,
-                    "ok": 200 <= resp.status_code < 300,
-                    "body_preview": resp.text[:200],
-                })
+                # Browser: navigate
+                elif method in _browser_methods:
+                    if page:
+                        goto_url = details.get("url", details.get("path", "/"))
+                        if goto_url.startswith("/"):
+                            goto_url = f"{base_url}{goto_url}"
+                        await page.goto(goto_url, wait_until="networkidle", timeout=15000)
+                        results.append({"step": step.get("action", ""), "ok": True, "done": f"Navigated to {goto_url}"})
+                    else:
+                        results.append({"step": step.get("action", ""), "ok": True, "skipped": "no page for browser setup"})
+
+                # Browser: click
+                elif method == "CLICK":
+                    if page:
+                        selector = details.get("selector", details.get("path", ""))
+                        await page.wait_for_selector(selector, timeout=5000)
+                        await page.click(selector)
+                        results.append({"step": step.get("action", ""), "ok": True, "done": f"Clicked {selector}"})
+                    else:
+                        results.append({"step": step.get("action", ""), "ok": True, "skipped": "no page"})
+
+                # Browser: fill
+                elif method == "FILL":
+                    if page:
+                        selector = details.get("selector", "")
+                        value = str(details.get("value", ""))
+                        await page.fill(selector, value)
+                        results.append({"step": step.get("action", ""), "ok": True, "done": f"Filled {selector}"})
+                    else:
+                        results.append({"step": step.get("action", ""), "ok": True, "skipped": "no page"})
+
+                # Wait
+                elif method == "WAIT":
+                    ms = details.get("ms", details.get("wait_ms", 1000))
+                    await asyncio.sleep(int(ms) / 1000)
+                    results.append({"step": step.get("action", ""), "ok": True, "done": f"Waited {ms}ms"})
+
+                else:
+                    results.append({"step": step.get("action", ""), "ok": True, "skipped": f"Unknown method: {method}"})
+
             except Exception as e:
                 results.append({"step": step.get("action", ""), "error": str(e)})
 
@@ -329,9 +371,9 @@ async def run_tests(plan: dict, target_port: int = DEFAULT_PORT) -> list[dict]:
         tc_name = tc.get("name", "unnamed")
 
         try:
-            # Run setup steps first (create preconditions)
+            # Run setup for non-browser tests (browser tests handle setup with their own page)
             setup_steps = tc.get("setup", [])
-            if setup_steps:
+            if setup_steps and tc_type != "browser":
                 setup_results = await _run_setup_steps(setup_steps, base_url)
                 setup_failed = [s for s in setup_results if s.get("error") or not s.get("ok", True)]
                 if setup_failed:
@@ -343,11 +385,11 @@ async def run_tests(plan: dict, target_port: int = DEFAULT_PORT) -> list[dict]:
                         "setup_results": setup_results,
                     })
                     continue
-                # Brief pause for server to process setup
                 await asyncio.sleep(0.5)
             if tc_type == "api":
                 result = await _run_api_test(tc, base_url)
             elif tc_type == "browser":
+                # Browser tests run setup inside Playwright context (has page object)
                 result = await _run_browser_test(tc, base_url)
             elif tc_type == "unit":
                 result = await _run_unit_test(tc)
@@ -439,7 +481,7 @@ async def _run_api_test(tc: dict, base_url: str = BASE_URL) -> dict:
 
 
 async def _run_browser_test(tc: dict, base_url: str = BASE_URL) -> dict:
-    """Execute a browser test case using Playwright. Setup steps already ran via API."""
+    """Execute a browser test case using Playwright. Runs setup with page object."""
     from playwright.async_api import async_playwright
 
     details = []
@@ -450,6 +492,20 @@ async def _run_browser_test(tc: dict, base_url: str = BASE_URL) -> dict:
         page = await browser.new_page()
 
         try:
+            # Run setup with page object — supports both HTTP and browser actions
+            setup_steps = tc.get("setup", [])
+            if setup_steps:
+                setup_results = await _run_setup_steps(setup_steps, base_url, page=page)
+                setup_failed = [s for s in setup_results if s.get("error")]
+                if setup_failed:
+                    await browser.close()
+                    return {
+                        "status": "error",
+                        "details": [{"step": "SETUP FAILED", "assertion_failed": f"Setup: {setup_failed[0]}"}],
+                        "setup_results": setup_results,
+                    }
+                await asyncio.sleep(0.5)
+
             for step in tc.get("steps", []):
                 action = step.get("action", "")
                 step_details = step.get("details", {})

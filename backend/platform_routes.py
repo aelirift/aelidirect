@@ -75,42 +75,36 @@ async def wipe_branch():
     wiped = []
     errors = []
 
-    # 1. Source files
-    for rel in PLATFORM_SOURCE_FILES:
-        try:
-            prod_file = PROD_ROOT / rel
-            branch_file = BRANCH_ROOT / rel
-            if prod_file.exists():
-                branch_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(prod_file), str(branch_file))
-                wiped.append(rel)
-        except Exception as e:
-            errors.append(f"{rel}: {e}")
+    # Full sync: copy EVERYTHING from prod → branch (except .git)
+    # Delete branch contents first, then copy prod entirely
+    try:
+        # Remove all branch contents (except .git if it exists)
+        for item in BRANCH_ROOT.iterdir():
+            if item.name == ".git":
+                continue
+            try:
+                if item.is_dir():
+                    shutil.rmtree(str(item))
+                else:
+                    item.unlink()
+            except Exception as e:
+                errors.append(f"remove {item.name}: {e}")
 
-    # 2. Data directories (full copy — branch starts with prod's full state)
-    for rel in PLATFORM_DATA_DIRS:
-        try:
-            prod_dir = PROD_ROOT / rel
-            branch_dir = BRANCH_ROOT / rel
-            if prod_dir.exists():
-                if branch_dir.exists():
-                    shutil.rmtree(str(branch_dir))
-                shutil.copytree(str(prod_dir), str(branch_dir), symlinks=True)
-                wiped.append(rel + "/")
-        except Exception as e:
-            errors.append(f"{rel}: {e}")
-
-    # 3. Data files (config, ports, docs)
-    for rel in PLATFORM_DATA_FILES:
-        try:
-            prod_file = PROD_ROOT / rel
-            branch_file = BRANCH_ROOT / rel
-            if prod_file.exists():
-                branch_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(prod_file), str(branch_file))
-                wiped.append(rel)
-        except Exception as e:
-            errors.append(f"{rel}: {e}")
+        # Copy all prod contents to branch
+        for item in PROD_ROOT.iterdir():
+            if item.name == ".git" or item.name == ".claude":
+                continue
+            try:
+                dest = BRANCH_ROOT / item.name
+                if item.is_dir():
+                    shutil.copytree(str(item), str(dest), symlinks=True)
+                else:
+                    shutil.copy2(str(item), str(dest))
+                wiped.append(item.name)
+            except Exception as e:
+                errors.append(f"copy {item.name}: {e}")
+    except Exception as e:
+        errors.append(f"sync: {e}")
 
     # Sync file caches: main → branch
     from tools import file_cache_wipe_branch

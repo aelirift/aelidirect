@@ -132,7 +132,7 @@ DIRECT_AGENT_PROMPT = (
     "- git_commit after successful changes\n\n"
     "PLATFORM EDITING (aelidirect_platform):\n"
     "- Platform source is at the ROOT of the project directory (backend/, frontend/).\n"
-    "- NEVER look in projects/aelidirect_platform/ — that is a metadata subdirectory, not source.\n"
+    "- NEVER look in the projects/ subdirectory — it contains user project data, not platform source.\n"
     "- Docs (SPEC.md, SITE_MAP.md, etc.) are at the project ROOT, not in projects/.\n"
     "- After any platform file edit: syntax-check, then restart_platform()\n"
     "- restart_platform restarts branch on 10101. Prod (10100) unaffected.\n\n"

@@ -161,7 +161,7 @@ Test types:
 - "browser": Playwright actions. Steps should include selectors, actions (click, fill, wait_for), and what to check in the DOM. IMPORTANT: browser tests also have setup — use API calls in setup to create the data, then browser steps to verify the UI.
 - "unit": Direct Python imports and function calls. Steps should include module, function, args, and expected return.
 
-Use PORT_PLACEHOLDER in URLs — it will be replaced with the actual port at runtime.
+Use the target port from the context in URLs. For browser tests, use http://127.0.0.1:{port}/.
 
 Be thorough but practical. Only test things that can actually be verified programmatically.
 For browser tests, use CSS selectors that exist in the actual HTML (you have the source).
@@ -271,6 +271,19 @@ Test against port {target_port} (http://127.0.0.1:{target_port})
 # PHASE 2: RUN — Execute test plan
 # ═══════════════════════════════════════════════════════════════════
 
+def _resolve_url(url: str, base_url: str) -> str:
+    """Resolve a URL: replace PORT_PLACEHOLDER, make relative URLs absolute."""
+    if "PORT_PLACEHOLDER" in url:
+        url = url.replace("PORT_PLACEHOLDER", base_url.split(":")[-1])
+    if "127.0.0.1:10100" in url:
+        url = url.replace("127.0.0.1:10100", base_url.split("//")[1] if "//" in base_url else base_url)
+    if url.startswith("/"):
+        url = f"{base_url}{url}"
+    elif not url.startswith("http"):
+        url = f"{base_url}/{url}"
+    return url
+
+
 async def _run_setup_steps(setup_steps: list, base_url: str, page=None) -> list[dict]:
     """Execute setup steps — supports both HTTP calls and browser actions.
 
@@ -311,9 +324,7 @@ async def _run_setup_steps(setup_steps: list, base_url: str, page=None) -> list[
                 # Browser: navigate
                 elif method in _browser_methods:
                     if page:
-                        goto_url = details.get("url", details.get("path", "/"))
-                        if goto_url.startswith("/"):
-                            goto_url = f"{base_url}{goto_url}"
+                        goto_url = _resolve_url(details.get("url", details.get("path", "/")), base_url)
                         await page.goto(goto_url, wait_until="networkidle", timeout=15000)
                         results.append({"step": step.get("action", ""), "ok": True, "done": f"Navigated to {goto_url}"})
                     else:
@@ -513,14 +524,7 @@ async def _run_browser_test(tc: dict, base_url: str = BASE_URL) -> dict:
 
                 try:
                     if step_details.get("goto"):
-                        # Replace PORT_PLACEHOLDER or hardcoded ports with actual base_url
-                        goto_url = step_details["goto"]
-                        if "PORT_PLACEHOLDER" in goto_url:
-                            goto_url = goto_url.replace("PORT_PLACEHOLDER", base_url.split(":")[-1])
-                        elif goto_url.startswith("/"):
-                            goto_url = f"{base_url}{goto_url}"
-                        elif "127.0.0.1:10100" in goto_url:
-                            goto_url = goto_url.replace("127.0.0.1:10100", f"127.0.0.1:{base_url.split(':')[-1]}")
+                        goto_url = _resolve_url(step_details["goto"], base_url)
                         await page.goto(goto_url, wait_until="networkidle", timeout=15000)
                         step_result["done"] = f"Navigated to {goto_url}"
 

@@ -328,30 +328,46 @@ async def run_chat_pipeline(message: str, project_dir: str):
         _phase = "coding"           # Current phase: coding, testing, post_test
 
         try:
-            _log.info(f"[pipeline] START project={project_dir} msg={msg[:80]}")
+            _sys_prompt_len = len(system_prompt)
+            _log.info(f"[trace] START project={project_dir} msg={msg[:80]} "
+                      f"system_prompt={_sys_prompt_len} chars model={prov['model']}")
+            _log.info(f"[trace] CONTEXT site_map={'yes' if 'SITE MAP' in system_prompt else 'no'} "
+                      f"spec={'yes' if 'PROJECT SPEC' in system_prompt else 'no'} "
+                      f"memory={'yes' if 'LONG-TERM MEMORY' in system_prompt else 'no'} "
+                      f"history={'yes' if 'CONVERSATION HISTORY' in system_prompt else 'no'}")
             # ── PLANNING TURN (disabled — model hallucinates tool calls and adds unrelated fixes) ──
             _plan_text = ""
 
             # ── CODING (tools enabled) ──
             yield sse_event("phase", {"phase": "coding"})
+            _log.info(f"[trace] PHASE coding tools={len(DIRECT_TOOL_DEFS)} max_turns={max_turns}")
             while action_turns < max_turns:
                 total_turns += 1
                 yield sse_event("turn", {"turn": total_turns, "action_turns": action_turns, "max": max_turns})
 
                 # Trim stale content before each LLM call to save context window
                 _trimmed = _trim_messages(messages)
+                _trimmed_chars = sum(len(json.dumps(m)) for m in _trimmed)
+                _log.info(f"[trace] LLM_CALL turn={total_turns} action={action_turns} "
+                          f"msgs={len(_trimmed)} chars={_trimmed_chars}")
                 raw = await asyncio.to_thread(
                     call_llm, selected, prov["api_key"], prov["base_url"],
                     prov["model"], _trimmed, DIRECT_TOOL_DEFS, 0.3,
                 )
                 parsed = extract_response(raw)
+                _log.info(f"[trace] LLM_RESPONSE type={parsed['type']} "
+                          f"content_len={len(parsed.get('content', '') or '')} "
+                          f"tool_calls={len(parsed.get('tool_calls', []))}")
 
                 if parsed["type"] == "text":
                     _last_response_text = parsed["content"]
+                    _log.info(f"[trace] TEXT_RESPONSE len={len(_last_response_text)} preview={_last_response_text[:100]}")
                     yield sse_event("response", {"content": parsed["content"]})
                     break
 
                 if parsed["content"] and parsed["content"].strip():
+                    _think_preview = parsed["content"].strip()[:100]
+                    _log.info(f"[trace] THINKING len={len(parsed['content'])} preview={_think_preview}")
                     yield sse_event("thinking", {"content": parsed["content"].strip()})
 
                 assistant_msg = {"role": "assistant", "content": parsed["content"] or ""}
@@ -363,10 +379,14 @@ async def run_chat_pipeline(message: str, project_dir: str):
                 messages.append(assistant_msg)
 
                 all_readonly = all(_is_readonly_tool_call(tc) for tc in parsed["tool_calls"])
+                _tool_names = [tc["function_name"] for tc in parsed["tool_calls"]]
+                _log.info(f"[trace] TOOL_CALLS count={len(_tool_names)} names={_tool_names} readonly={all_readonly}")
 
                 for tc in parsed["tool_calls"]:
                     name = tc["function_name"]
                     args = tc["arguments"]
+                    _args_preview = json.dumps(args)[:150]
+                    _log.info(f"[trace] TOOL_EXEC name={name} args={_args_preview}")
                     yield sse_event("tool_call", {"name": name, "args": args})
 
                     try:
@@ -487,339 +507,34 @@ async def run_chat_pipeline(message: str, project_dir: str):
                         else:
                             result = execute_tool(name, args, project_dir=project_path)
                     except Exception as e:
-                        _log.error(f"[pipeline] TOOL ERROR name={name} error={e}")
+                        _log.error(f"[trace] TOOL_ERROR name={name} error={e}")
                         result = f"Tool error in {name}: {e}"
 
+                    _result_preview = result[:150].replace('\n', ' ')
+                    _log.info(f"[trace] TOOL_RESULT name={name} len={len(result)} preview={_result_preview}")
                     yield sse_event("tool_result", {"name": name, "result": result[:TRUNCATE_TOOL_RESULT]})
                     messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
                     _used_any_tools = True
-                    # Track if agent made code changes (for auto-test trigger)
                     if name in ("edit_file", "patch_file") and not result.startswith("ERROR"):
                         _made_code_changes = True
+                        _log.info(f"[trace] CODE_CHANGE tool={name} file={args.get('path', '?')}")
 
                 if not all_readonly:
                     action_turns += 1
+                    _log.info(f"[trace] ACTION_TURN incremented to {action_turns}")
 
             # ── TEST PHASE (runs after agent loop, regardless of how it ended) ──
             _msg_chars = sum(len(json.dumps(m)) for m in messages)
-            _log.info(f"[pipeline] AGENT LOOP DONE turns={total_turns} action={action_turns} "
+            _log.info(f"[trace] AGENT_LOOP_DONE turns={total_turns} action={action_turns} "
                       f"code_changes={_made_code_changes} tools_used={_used_any_tools} "
-                      f"msgs={len(messages)} chars={_msg_chars}")
-            # ── TEST PHASE — programmatic tests from code changes ──
-            if _made_code_changes:
-                _log.info(f"[pipeline] TEST PHASE starting (max {_max_test_fix} iterations)")
-            while (_made_code_changes and _test_fix_iteration < _max_test_fix):
-                try:
-                    from test_agent import run_tests_from_changes, format_failures_as_message
-
-                    _phase = "testing"
-                    yield sse_event("phase", {"phase": "testing"})
-
-                    # Restart branch so tests hit the new code
-                    if project_path.resolve() == BRANCH_ROOT.resolve():
-                        import subprocess as _test_sp
-                        yield sse_event("test_phase", {"status": "deploying_branch"})
-                        try:
-                            _test_sp.run(
-                                ["systemctl", "--user", "restart", "aelidirect-branch.service"],
-                                check=True, timeout=SUBPROCESS_TIMEOUT,
-                            )
-                            await asyncio.sleep(2)
-                        except Exception:
-                            pass
-
-                    _test_fix_iteration += 1
-                    _test_port = BRANCH_PORT if project_path.resolve() == BRANCH_ROOT.resolve() else PROD_PORT
-
-                    # Extract what the agent changed
-                    _changes_summary = []
-                    for _cm in messages:
-                        if _cm.get("role") == "tool":
-                            _cc = _cm.get("content", "")
-                            if _cc.startswith("Patched "):
-                                _changes_summary.append(_cc[:300])
-                            elif _cc.startswith("File written"):
-                                _changes_summary.append(_cc[:300])
-                        if _cm.get("role") == "assistant" and _cm.get("tool_calls"):
-                            for _tc in _cm["tool_calls"]:
-                                _fn = _tc.get("function", {})
-                                if _fn.get("name") == "patch_file":
-                                    try:
-                                        _args = json.loads(_fn.get("arguments", "{}"))
-                                        _path = _args.get("path", "")
-                                        _old = _args.get("old_text", "")
-                                        _new = _args.get("new_text", "")
-                                        if _path and _new:
-                                            # Find lines that are NEW (in new_text but not in old_text)
-                                            _old_lines = set(_old.splitlines()) if _old else set()
-                                            _new_lines = _new.splitlines()
-                                            _added = [l for l in _new_lines if l.strip() and l not in _old_lines]
-                                            if _added:
-                                                _changes_summary.append(f"In {_path}, added:\n" + "\n".join(_added[:20]))
-                                            # Find lines REMOVED
-                                            _new_set = set(_new.splitlines())
-                                            _removed = [l for l in (_old.splitlines() if _old else []) if l.strip() and l not in _new_set]
-                                            if _removed:
-                                                _changes_summary.append(f"In {_path}, removed:\n" + "\n".join(_removed[:10]))
-                                    except (json.JSONDecodeError, TypeError):
-                                        pass
-
-                    yield sse_event("test_phase", {
-                        "status": "running",
-                        "iteration": _test_fix_iteration,
-                    })
-
-                    # Run tests programmatically — no LLM planning
-                    _test_result = await run_tests_from_changes(
-                        changes_summary=_changes_summary,
-                        messages=messages,
-                        project_dir=project_dir,
-                        target_port=_test_port,
-                        user_prompt=msg,
-                    )
-
-                    results = _test_result.get("results", [])
-                    passed = _test_result.get("passed", 0)
-                    failed = _test_result.get("failed", 0)
-
-                    # Send test count now that we know
-                    yield sse_event("test_phase", {
-                        "status": "running",
-                        "test_count": _test_result.get("total", 0),
-                        "iteration": _test_fix_iteration,
-                        "plan_summary": _test_result.get("summary", ""),
-                        "tests": [{"id": r.get("id", "?"), "name": r.get("name", ""), "type": r.get("type", "")} for r in results],
-                    })
-
-                    _test_evidence.append({
-                        "iteration": _test_fix_iteration,
-                        "plan_summary": _test_result.get("summary", ""),
-                        "total": _test_result.get("total", 0), "passed": passed, "failed": failed,
-                        "details": results,
-                    })
-
-                    # Send per-test results for frontend display
-                    _results_summary = []
-                    for r in results:
-                        entry = {"id": r.get("id", "?"), "name": r.get("name", ""), "status": r.get("status", "?")}
-                        if r.get("status") != "pass":
-                            # Include failure details
-                            fail_reasons = []
-                            for det in r.get("details", []):
-                                if isinstance(det, dict) and det.get("assertion_failed"):
-                                    fail_reasons.append(det["assertion_failed"][:200])
-                            entry["errors"] = fail_reasons[:5]
-                        _results_summary.append(entry)
-
-                    if not failed:
-                        yield sse_event("test_phase", {
-                            "status": "all_passed", "passed": passed,
-                            "iteration": _test_fix_iteration,
-                            "results": _results_summary,
-                        })
-                        break  # Tests passed, exit test loop
-
-                    # Tests failed — send detailed results
-                    yield sse_event("test_feedback", {
-                        "status": "failures_found", "passed": passed,
-                        "failed": failed, "iteration": _test_fix_iteration,
-                        "results": _results_summary,
-                    })
-
-                    # Inject failures + original task into conversation, re-enter MAIN loop
-                    failure_msg = format_failures_as_message(results)
-                    # Remind agent of original task so it doesn't drift into fixing test infra
-                    failure_msg = (
-                        f"ORIGINAL TASK: {msg}\n\n"
-                        f"Fix ONLY real code/design bugs in YOUR code. "
-                        f"Do NOT create fake endpoints, workarounds, or stubs to pass tests. "
-                        f"If a test failure looks like a testing issue (wrong selector, timeout, "
-                        f"page not loaded), ignore it and focus on real bugs only.\n\n"
-                        + failure_msg
-                    )
-                    if _last_response_text:
-                        messages.append({"role": "assistant", "content": _last_response_text})
-                    messages.append({"role": "user", "content": failure_msg})
-                    action_turns = 0  # Reset turns
-                    _last_response_text = ""
-
-                    # Re-enter the SAME main agent loop (one pipeline, full tool dispatch)
-                    yield sse_event("phase", {"phase": "coding"})
-                    while action_turns < max_turns:
-                        total_turns += 1
-                        yield sse_event("turn", {"turn": total_turns, "action_turns": action_turns, "max": max_turns})
-
-                        _trimmed = _trim_messages(messages)
-                        raw = await asyncio.to_thread(
-                            call_llm, selected, prov["api_key"], prov["base_url"],
-                            prov["model"], _trimmed, DIRECT_TOOL_DEFS, 0.3,
-                        )
-                        parsed = extract_response(raw)
-
-                        if parsed["type"] == "text":
-                            _last_response_text = parsed["content"]
-                            yield sse_event("response", {"content": parsed["content"]})
-                            break
-
-                        if parsed["content"] and parsed["content"].strip():
-                            yield sse_event("thinking", {"content": parsed["content"].strip()})
-
-                        assistant_msg = {"role": "assistant", "content": parsed["content"] or ""}
-                        assistant_msg["tool_calls"] = [
-                            {"id": tc["id"], "type": "function",
-                             "function": {"name": tc["function_name"], "arguments": json.dumps(tc["arguments"])}}
-                            for tc in parsed["tool_calls"]
-                        ]
-                        messages.append(assistant_msg)
-
-                        all_readonly = all(_is_readonly_tool_call(tc) for tc in parsed["tool_calls"])
-
-                        for tc in parsed["tool_calls"]:
-                            name = tc["function_name"]
-                            args = tc["arguments"]
-                            yield sse_event("tool_call", {"name": name, "args": args})
-
-                            try:
-                                if name == "deploy_pod" and project_path.name == "aelidirect_platform":
-                                    result = "ERROR: This is the platform itself — use restart_platform() instead."
-                                elif name == "deploy_pod":
-                                    from tools import write_project_env as _wpd
-                                    _env = read_project_env(project_path)
-                                    _port = int(_env.get("pod_port", 0)) or get_available_port(project_name) or 0
-                                    if _port:
-                                        _ver = int(_env.get("deploy_version", "0")) + 1
-                                        deploy_result = spin_up_pod(project_path, project_name, _port, _ver)
-                                        if deploy_result["success"]:
-                                            _direct_state["port"] = _port
-                                            _env2 = read_project_env(project_path)
-                                            _extra = {k: v for k, v in _env2.items()
-                                                      if k not in ("project_name", "project_dir", "tech_stack", "os", "python", "pod_port", "deploy_version")}
-                                            _extra["Pod Port"] = str(_port)
-                                            _extra["Deploy Version"] = str(_ver)
-                                            _wpd(project_path, _env2.get("project_name", project_name),
-                                                 _env2.get("tech_stack", "auto"), _extra if _extra else None)
-                                            result = f"DEPLOYED: {_pod_url(_port)} (v{_ver})\nPod: {deploy_result['pod_name']}"
-                                            yield sse_event("pod_url", {"url": _pod_url(_port)})
-                                        else:
-                                            result = f"FAILED at {deploy_result['phase']}: {deploy_result['message']}\nLogs: {deploy_result.get('logs', '')[:500]}"
-                                    else:
-                                        result = "FAILED: No available ports"
-                                elif name == "restart_platform":
-                                    import subprocess as _sp
-                                    try:
-                                        r = _sp.run(
-                                            ["systemctl", "--user", "restart", "aelidirect-branch"],
-                                            capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
-                                        )
-                                        if r.returncode == 0:
-                                            import time as _time
-                                            _time.sleep(2)
-                                            _check = http_get(BRANCH_PORT, "/")
-                                            if _check.startswith("HTTP 200"):
-                                                result = "Branch restarted on port 10101 and healthy."
-                                            else:
-                                                result = f"Branch restarted but health check failed: {_check[:200]}"
-                                        else:
-                                            result = f"Branch restart failed: {r.stderr}"
-                                    except Exception as e:
-                                        result = f"Restart error: {e}"
-                                elif name == "http_check":
-                                    _port = _direct_state.get("port", 0)
-                                    result = http_get(_port, args.get("path", "/")) if _port else "No pod running"
-                                elif name == "bash":
-                                    import subprocess as _sp
-                                    cmd = args.get("command", "")
-                                    try:
-                                        r = _sp.run(cmd, shell=True, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_LONG, cwd=str(project_path))
-                                        result = f"exit code: {r.returncode}\n"
-                                        if r.stdout: result += f"stdout:\n{r.stdout[:TRUNCATE_STDOUT]}\n"
-                                        if r.stderr: result += f"stderr:\n{r.stderr[:TRUNCATE_STDERR]}"
-                                        if not r.stdout and not r.stderr: result += "(no output)"
-                                    except _sp.TimeoutExpired:
-                                        result = "Command timed out (60s limit)"
-                                elif name == "git_status":
-                                    import subprocess as _sp
-                                    if not (project_path / ".git").exists():
-                                        _sp.run(["git", "init"], cwd=str(project_path), capture_output=True)
-                                        _sp.run(["git", "add", "."], cwd=str(project_path), capture_output=True)
-                                        _sp.run(["git", "commit", "-m", "Initial commit"],
-                                               cwd=str(project_path), capture_output=True,
-                                               env={**__import__('os').environ, "GIT_AUTHOR_NAME": "aelidirect",
-                                                    "GIT_AUTHOR_EMAIL": "aelidirect@local",
-                                                    "GIT_COMMITTER_NAME": "aelidirect",
-                                                    "GIT_COMMITTER_EMAIL": "aelidirect@local"})
-                                    r = _sp.run(["git", "status"], cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
-                                    result = r.stdout + r.stderr
-                                elif name == "git_diff":
-                                    import subprocess as _sp
-                                    r = _sp.run(["git", "diff"], cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
-                                    result = r.stdout[:TRUNCATE_GIT_DIFF] or "(no changes)"
-                                elif name == "git_log":
-                                    import subprocess as _sp
-                                    n = int(args.get("n", 5))
-                                    r = _sp.run(["git", "log", "--oneline", f"-{n}"], cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
-                                    result = r.stdout or "(no commits)"
-                                elif name == "git_commit":
-                                    import subprocess as _sp
-                                    _commit_msg = args.get("message", "Update")
-                                    _sp.run(["git", "add", "."], cwd=str(project_path), capture_output=True)
-                                    r = _sp.run(["git", "commit", "-m", _commit_msg],
-                                               cwd=str(project_path), capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
-                                               env={**__import__('os').environ, "GIT_AUTHOR_NAME": "aelidirect",
-                                                    "GIT_AUTHOR_EMAIL": "aelidirect@local",
-                                                    "GIT_COMMITTER_NAME": "aelidirect",
-                                                    "GIT_COMMITTER_EMAIL": "aelidirect@local"})
-                                    result = r.stdout + r.stderr
-                                elif name == "memory_save":
-                                    key = args.get("key", "").replace("/", "_").replace("..", "")
-                                    content = args.get("content", "")
-                                    mem_dir = MEMORY_DIR / project_path.name
-                                    mem_dir.mkdir(exist_ok=True)
-                                    (mem_dir / f"{key}.md").write_text(content)
-                                    result = f"Saved memory: {key} ({len(content)} chars)"
-                                elif name == "memory_load":
-                                    key = args.get("key", "").replace("/", "_").replace("..", "")
-                                    mem_path = MEMORY_DIR / project_path.name / f"{key}.md"
-                                    result = mem_path.read_text() if mem_path.exists() else f"Memory '{key}' not found"
-                                elif name == "memory_list":
-                                    mem_dir = MEMORY_DIR / project_path.name
-                                    if mem_dir.exists():
-                                        keys = [f.stem for f in sorted(mem_dir.glob("*.md"))]
-                                        result = "Saved memories:\n" + "\n".join(f"  - {k}" for k in keys) if keys else "No memories saved"
-                                    else:
-                                        result = "No memories saved"
-                                elif name == "test_agent":
-                                    from test_agent import handle_test_agent
-                                    result = await handle_test_agent(args)
-                                else:
-                                    result = execute_tool(name, args, project_dir=project_path)
-                            except Exception as e:
-                                result = f"Tool error in {name}: {e}"
-
-                            yield sse_event("tool_result", {"name": name, "result": result[:TRUNCATE_TOOL_RESULT]})
-                            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-                            _used_any_tools = True
-                            if name in ("edit_file", "patch_file") and not result.startswith("ERROR"):
-                                _made_code_changes = True
-
-                        if not all_readonly:
-                            action_turns += 1
-
-                    # After fix attempt, loop back to test again
-                    continue
-
-                except Exception as _te:
-                    import traceback as _tb
-                    _log.error(f"[pipeline] TEST PHASE ERROR iter={_test_fix_iteration} "
-                               f"last_tool={messages[-1].get('role', '?')} error={_te}\n{_tb.format_exc()}")
-                    yield sse_event("test_phase", {"status": "error", "error": str(_te)[:200]})
-                    break
-            # ── END TEST PHASE ──────────────────────────────────
+                      f"msgs={len(messages)} chars={_msg_chars} "
+                      f"last_response={'text' if _last_response_text else 'none'}")
+            # ── TEST PHASE REMOVED — using e2e trace logs instead ──
 
             # ── POST-TEST PHASE ──────────────────────────────────
             _phase = "post_test"
-            _log.info(f"[pipeline] POST-TEST test_iterations={_test_fix_iteration} evidence={len(_test_evidence)}")
+            _log.info(f"[trace] POST_PHASE code_changes={_made_code_changes} tools_used={_used_any_tools}")
             yield sse_event("phase", {"phase": "post_test"})
 
             # Extract final response text for TD review
@@ -834,6 +549,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
             _td_review_text = None
             if _used_any_tools:
                 try:
+                    _log.info(f"[trace] TD_REVIEW_START tools_used={_used_any_tools}")
                     yield sse_event("td_review", {"status": "running"})
                     # Build full arc summary for TD: task → plan → changes → response → tests
                     _review_input = f"## Original Task\n{msg}\n\n"
@@ -903,8 +619,9 @@ async def run_chat_pipeline(message: str, project_dir: str):
                     _log.error(f"[pipeline] TD REVIEW ERROR error={_tde}\n{_tdb.format_exc()}")
                     yield sse_event("td_review", {"status": "error", "error": str(_tde)[:200]})
 
-            _log.info(f"[pipeline] DONE turns={total_turns} action={action_turns} "
-                      f"test_iters={_test_fix_iteration} td={'yes' if _td_review_text else 'no'}")
+            _log.info(f"[trace] DONE turns={total_turns} action={action_turns} "
+                      f"td={'yes' if _td_review_text else 'no'} "
+                      f"td_len={len(_td_review_text) if _td_review_text else 0}")
             yield sse_event("done", {
                 "turns": total_turns,
                 "action_turns": action_turns,
@@ -912,9 +629,11 @@ async def run_chat_pipeline(message: str, project_dir: str):
                 "td_review": _td_review_text[:500] if _td_review_text else None,
             })
             try:
+                _log.info(f"[trace] SAVE_CONVERSATION project={project_dir} msgs={len(messages)}")
                 _save_conversation(project_dir, msg, messages, test_evidence=_test_evidence)
                 # Regenerate docs only on branch — prod never generates docs
                 if project_path.resolve() == BRANCH_ROOT.resolve():
+                    _log.info(f"[trace] REGEN_DOCS triggered (branch project)")
                     loop = asyncio.get_event_loop()
                     loop.create_task(_regenerate_docs())
                 # Restart branch if code changed but tests didn't run (no test phase triggered)
@@ -932,7 +651,7 @@ async def run_chat_pipeline(message: str, project_dir: str):
 
         except Exception as e:
             import traceback
-            _log.error(f"[pipeline] FATAL phase={_phase} turns={total_turns} action={action_turns} "
+            _log.error(f"[trace] FATAL phase={_phase} turns={total_turns} action={action_turns} "
                        f"msgs={len(messages)} error={e}\n{traceback.format_exc()}")
             yield sse_event("error", {"message": str(e), "traceback": traceback.format_exc()})
             try:

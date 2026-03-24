@@ -75,8 +75,7 @@ async def wipe_branch():
     wiped = []
     errors = []
 
-    # Source files only — each server maintains its own data
-    # (conversations, todos, heartbeats, memory, TD reports are separate per server)
+    # 1. Source files
     for rel in PLATFORM_SOURCE_FILES:
         try:
             prod_file = PROD_ROOT / rel
@@ -88,8 +87,21 @@ async def wipe_branch():
         except Exception as e:
             errors.append(f"{rel}: {e}")
 
-    # Config only (API keys needed on branch) — not data dirs or docs
-    for rel in ("backend/.config.json",):
+    # 2. Data directories (full copy — branch starts with prod's full state)
+    for rel in PLATFORM_DATA_DIRS:
+        try:
+            prod_dir = PROD_ROOT / rel
+            branch_dir = BRANCH_ROOT / rel
+            if prod_dir.exists():
+                if branch_dir.exists():
+                    shutil.rmtree(str(branch_dir))
+                shutil.copytree(str(prod_dir), str(branch_dir), symlinks=True)
+                wiped.append(rel + "/")
+        except Exception as e:
+            errors.append(f"{rel}: {e}")
+
+    # 3. Data files (config, ports, docs)
+    for rel in PLATFORM_DATA_FILES:
         try:
             prod_file = PROD_ROOT / rel
             branch_file = BRANCH_ROOT / rel

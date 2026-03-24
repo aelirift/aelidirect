@@ -3,11 +3,19 @@ Auto-documentation regeneration — SPEC.md, CONTEXT_MAP.md, DATA_FLOW.md, SITE_
 """
 
 import asyncio
+import re
 import concurrent.futures
 
 from constants import PROD_ROOT, BRANCH_ROOT
 from state import config, _get_provider
 from llm_client import call_llm, extract_response
+
+
+def _strip_llm_artifacts(text: str) -> str:
+    """Strip <think> blocks and [TOOL_CALL] blocks from LLM output."""
+    text = re.sub(r'<think>[\s\S]*?</think>', '', text)
+    text = re.sub(r'\[TOOL_CALL\][\s\S]*?\[/TOOL_CALL\]', '', text)
+    return text.strip()
 
 
 _CONTEXT_MAP_PROMPT = (
@@ -110,7 +118,7 @@ async def _regenerate_docs():
                 None, 0.3,
             )
             parsed = extract_response(result)
-            (BRANCH_ROOT / "CONTEXT_MAP.md").write_text(parsed["content"])
+            (BRANCH_ROOT / "CONTEXT_MAP.md").write_text(_strip_llm_artifacts(parsed["content"]))
             _log.info("[docs] CONTEXT_MAP.md regenerated")
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate CONTEXT_MAP.md: {e}")
@@ -126,7 +134,7 @@ async def _regenerate_docs():
                 None, 0.3,
             )
             parsed = extract_response(result)
-            (BRANCH_ROOT / "DATA_FLOW.md").write_text(parsed["content"])
+            (BRANCH_ROOT / "DATA_FLOW.md").write_text(_strip_llm_artifacts(parsed["content"]))
             _log.info("[docs] DATA_FLOW.md regenerated")
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate DATA_FLOW.md: {e}")
@@ -142,7 +150,7 @@ async def _regenerate_docs():
                 None, 0.3,
             )
             parsed = extract_response(result)
-            (BRANCH_ROOT / "SPEC.md").write_text(parsed["content"])
+            (BRANCH_ROOT / "SPEC.md").write_text(_strip_llm_artifacts(parsed["content"]))
             _log.info("[docs] SPEC.md regenerated")
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate SPEC.md: {e}")
@@ -180,7 +188,7 @@ async def _regenerate_docs():
                 None, 0.3,
             )
             parsed = extract_response(result)
-            (BRANCH_ROOT / "SITE_MAP.md").write_text(parsed["content"])
+            (BRANCH_ROOT / "SITE_MAP.md").write_text(_strip_llm_artifacts(parsed["content"]))
             _log.info("[docs] SITE_MAP.md regenerated")
         except Exception as e:
             _log.error(f"[docs] Failed to regenerate SITE_MAP.md: {e}")

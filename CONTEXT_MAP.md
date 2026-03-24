@@ -1,33 +1,3 @@
-<think>
-The user wants me to generate a CONTEXT_MAP.md for the aelidirect project based on the source code provided. Let me analyze the codebase systematically.
-
-Looking at the files provided:
-
-1. **backend/pipeline.py** - The main chat pipeline with direct_start, direct_stream, event_generator
-2. **backend/heartbeat.py** - Heartbeat scheduler, executor, todo/heartbeat API routes
-3. **backend/platform_routes.py** - Branch/prod management routes
-4. **backend/history.py** - Conversation persistence and history
-5. **backend/td.py** - TD (Technical Director) review and analysis
-6. **backend/docs.py** - Auto-documentation regeneration
-
-
-7. **backend/tools.py** - Tools/functions available to the LLM agent
-8. **backend/direct_todo.py** - Todo list and heartbeat auto-executor
-9. **backend/llm_client.py** - Minimal LLM client (OpenRouter + MiniMax)
-10. **backend/pod.py** - Pod management (podman containers)
-11. **backend/test_agent.py** - Two-phase automated testing
-12. **backend/constants.py** - All shared constants
-13. **frontend/index.html** - Main frontend
-
-Now I need to generate a comprehensive context map documenting the API endpoints with their HTTP methods, paths, handlers, and line numbers, plus any additional architectural details. Looking at the API routes in more detail, I'm seeing the heartbeat endpoints for managing todo execution schedules, platform-level controls for managing branches and deployments, history management for conversations, and TD analysis for reviewing test results. I'm also noting the tools available for LLM agent operations like file and project management.
-
-Now I'm mapping out the pod infrastructure tools that handle container orchestration, the test agent functionality for planning and executing test suites, and then cataloging the key directories where data gets persisted—projects, conversations, todos, and heartbeat configurations all stored as JSON files.
-
-Looking at the frontend structure, there's a main shell with sidebar navigation, chat interface, config management, and several JavaScript functions that handle SSE event streams, project operations, and UI interactions. The core application state lives in a few key places—agent prompts, tool definitions, provider configuration, and progress tracking—while constants define ports, file size limits, timeouts, and storage paths.
-
-For pod deployment, there's a naming convention starting with `aelimini-`, containers listen on port 8000 internally while exposed on 11001-11099, and port allocations are managed in `.ports.json`. The platform source files are mapped across frontend and backend directories, though some files appear to be missing from the backend list. I should probably trace through app.py or main.py to see how all these routes actually connect together, since I haven't seen those files yet in the provided code. The pipeline connects to frontend event handling through SSE events, and now I have the full picture of how the backend components work together. Let me compile this into a comprehensive context map document.
-</think>
-
 ```markdown
 # aelidirect -- Context Map
 

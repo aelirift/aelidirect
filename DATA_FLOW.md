@@ -1,36 +1,3 @@
-<think>
-The user wants me to generate a DATA_FLOW.md file that traces the data flow through the aelidirect system. Let me analyze all the provided source code files and trace the 7 specified flows:
-
-1. Main chat flow (user message → SSE stream → agent loop → response)
-2. Tool call loop (LLM response → tool execution → result → next LLM call)
-3. Memory system (long-term save/load, short-term conversation history)
-4. Heartbeat/todo execution flow
-5. Deployment flow (pod management)
-6. Config and state management
-7. Branch/prod sync flow
-
-Let me trace through each file systematically:
-
-
-- `backend/app.py` contains the FastAPI router registration and application setup
-- `backend/state.py` manages the global config dictionary
-- `backend/pipeline.py` implements the core streaming chat pipeline with the agent loop
-- `backend/heartbeat.py` handles the scheduler, executor, and todo/heartbeat routes
-- `backend/platform_routes.py` manages branch/prod operations and deployment
-- `backend/history.py` persists conversation history
-- `backend/td.py` provides TD (Technical Director) review endpoints
-- `backend/docs.py` handles auto-documentation regeneration
-- `backend/tools.py` defines the tools available to the agent
-- `backend/direct_todo.py` manages the todo list and heartbeat system
-- `backend/llm_client.py` handles LLM API calls
-- `backend/pod.py` manages containerized pods
-- `backend/test_agent.py` implements automated testing
-- `backend/constants.py` contains all shared constants
-- `frontend/index.html` is the user interface
-
-Now I'm ready to trace through the complete data flow.
-</think>
-
 # aelidirect -- Data Flow
 
 This document traces all major data flows through the aelidirect codebase, step by step with file names, function names, and line numbers.

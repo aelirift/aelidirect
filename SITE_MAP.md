@@ -1,229 +1,348 @@
 <think>
-The user wants me to generate a SITE_MAP.md file based on the provided source code. Let me analyze all the files and create a comprehensive site map.
+The user wants me to generate a SITE_MAP.md file based on the provided source code. Let me analyze all the files in the codebase and create a comprehensive site map.
 
 Let me go through each file:
 
 ### backend/app.py
-FastAPI application with routes for the platform.
+- `create_app()` - Creates FastAPI app with routes and lifespan
+- `APIRouter` - router for all API routes
+- `@router.post("/api/config")` - api_update_config()
+- `@router.get("/api/config")` - api_get_config()
+- `@router.get("/api/projects")` - list_projects()
+- `@router.get("/api/projects/{project}")` - get_project()
+
+
+- `@router.delete("/api/projects/{project}")` - delete_project()
+- `@router.post("/api/pods")` - create_pod()
+- `@router.delete("/api/pods/{session_id}")` - destroy_pod()
+- `@router.post("/api/pods/{session_id}/restart")` - restart_pod()
+- `@router.get("/api/pods")` - list_pods()
+- `@router.get("/api/pods/{session_id}/logs")` - get_pod_logs()
+- `@router.get("/health")` - health_check()
 
 ### backend/state.py
-State management module.
+- `config` dict, `_get_provider()` - Gets current provider
+- `_pod_url()` - Gets pod URL
+- `sse_event()` - Creates SSE event string
+- `_is_readonly_tool_call()` - Checks if tool is read-only
+- `_direct_state` dict - Direct mode state
+- `DIRECT_AGENT_PROMPT` - System prompt
+- `DIRECT_TOOL_DEFS` - Tool definitions
+- `TODO_TD_REVIEW_PROMPT` - TD review prompt
 
 ### backend/pipeline.py
-The single chat pipeline — direct_start, direct_stream, and event_generator.
+- `_trim_messages()` - Trims stale content from messages
+- `@router.post("/api/direct/start")` - create_or_select_project()
+- `@router.get("/api/direct/stream")` - run_chat_pipeline()
 
 ### backend/heartbeat.py
-Heartbeat scheduler, executor, and todo/heartbeat API routes.
+- `_execute_todo_via_chat()` - Executes todo via chat
+- `_heartbeat_scheduler()` - Schedules heartbeat tasks
+- `@router.get("/api/direct/todos/{project_dir}")` - api_get_todos()
+- `@router.post("/api/direct/todos/{project_dir}")` - api_add_todo()
+- `@router.put("/api/direct/todos/{project_dir}/{todo_id}")` - api_update_todo()
+- `@router.get("/api/direct/todos/{project_dir}/{todo_id}")` - api_get_todo()
+- `@router.delete("/api/direct/todos/{project_dir}/{todo_id}")` - api_delete_todo()
+- `@router.get("/api/direct/heartbeat/{project_dir}")` - api_get_heartbeat()
+- `@router.post("/api/direct/heartbeat/{project_dir}")` - update_heartbeat_config()
+- `@router.post("/api/direct/heartbeat/{project_dir}/run")` - trigger_heartbeat_now()
+- `@router.get("/api/platform/heartbeat-progress")` - get_heartbeat_progress()
 
 ### backend/platform_routes.py
-Branch/prod management routes — branch status, wipe, deploy.
+- `_IS_BRANCH` - Whether running on branch
+- `@router.get("/api/platform/branch-status")` - get_branch_status()
+- `@router.post("/api/platform/branch-wipe")` - wipe_branch()
+- `@router.post("/api/platform/branch-deploy")` - deploy_branch()
 
 ### backend/history.py
-Conversation persistence and history endpoint.
+- `_save_conversation()` - Saves conversation to disk
+- `_load_conversation_history()` - Loads conversation history
+- `_summarize_old_conversations()` - Summarizes old conversations
+- `@router.delete("/api/direct/history/{project_dir}")` - erase_history()
+- `@router.get("/api/direct/history/{project_dir}")` - list_project_conversations()
 
+### backend/td.py
+- `TD_ANALYSIS_PROMPT` - Prompt for TD analysis
+- `_parse_td_verdict()` - Parses TD verdict
+- `@router.post("/api/td-analysis")` - run_td_analysis()
+- `@router.get("/api/td-analysis")` - get_latest_td_analysis()
+- `@router.get("/api/td-reports")` - list_td_reports()
+- `@router.get("/api/td-reports/{timestamp}")` - get_td_report()
 
-Now I'm documenting the remaining backend modules: a TD review and analysis endpoint, auto-documentation regeneration that generates spec files, the tools module with LLM-callable functions and a dual file cache, a direct mode todo list with heartbeat auto-execution, and an LLM client that handles OpenRouter and MiniMax requests.
+### backend/docs.py
+- `_CONTEXT_MAP_PROMPT`, `_DATA_FLOW_PROMPT`, `_SPEC_PROMPT` - Documentation prompts
+- `_regenerate_docs()` - Regenerates SPEC.md, CONTEXT_MAP.md, DATA_FLOW.md, SITE_MAP.md
 
-Continuing through the backend, there's pod management for building and running containers with health checks, a test agent with two-phase automated testing capabilities, and constants spread across both backend and frontend with state management and UI logic. Now I'm reviewing the remaining utility functions like git operations, memory management, and test handling, along with the heartbeat scheduler that manages todo execution through chat endpoints and exposes progress tracking. The platform routes handle branch management operations, and there's a history module that persists conversations with truncation and summarization capabilities.
+### backend/tools.py
+- `_SAFE_ROOTS`, `_active_project_dir` - Project roots and active project state
+- `_file_cache_main`, `_file_cache_branch`, `_file_cache_mtime` - File caches for main and branch
+- `_is_platform_project()`, `file_cache_get()`, `file_cache_set()`, `file_cache_set_main()` - Cache management functions
+- `file_cache_wipe_branch()`, `file_cache_deploy_to_main()`, `file_cache_clear()` - Cache operations
+- `_is_safe_path()`, `set_active_project()`, `get_active_project()` - Path safety and project management
+- `init_project_dir()`, `write_project_env()`, `read_project_env()`, `rename_project()` - Project directory operations
+- `TOOL_DEFINITIONS` - List of tool definitions
+- `execute_tool()` - Main tool execution dispatcher
+- `_tool_list_files()`, `_tool_read_file()` - File operations
+- `_tool_edit_file()`, `_tool_patch_file()` - File editing and patching
+- `_tool_read_file_tail()`, `_tool_grep_code()`, `_tool_read_lines()` - File reading utilities
+- `_tool_read_project()` - Reads all project files
 
-Moving into the TD analysis and documentation generation side, I'm seeing how the system analyzes conversation patterns to generate specs and context maps, then generating tools with dual cache support for platform projects.
+### backend/direct_todo.py
+- `_now()`, `_todo_path()`, `_load_todos()`, `_save_todos()` - Todo management utilities
+- `add_todo()`, `_classify_result()`, `update_todo()` - Todo CRUD operations
+- `delete_todo()`, `get_todos()`, `get_pending_todos()` - Todo deletion and retrieval
+- `HEARTBEAT_DIR`, `_hb_path()`, `get_heartbeat()`, `save_heartbeat()` - Heartbeat configuration
+- `record_heartbeat_run()`, `set_todo_review()`, `get_todo()` - Heartbeat and todo review operations
 
-For the todo and heartbeat management, there's task creation with categorization, status tracking, result classification, and queue processing with scheduling logic.
+### backend/llm_client.py
+- `TIMEOUT`, `RETRYABLE_CODES`, `MAX_RETRIES`, `RETRY_DELAY` - Configuration constants
+- `LLMError` - Custom exception class
+- `call_llm()` - Makes LLM API call
+- `extract_response()` - Parses LLM response
 
-The LLM client handles calls to OpenRouter and MiniMax with retry logic, extracting responses and parsing JSON arguments. Pod management covers port allocation, app type detection, container setup, and health checks with diagnostic tools.
+### backend/pod.py
+- `PORT_RANGE`, `PORT_FILE`, `INTERNAL_PORT` - Port configuration
+- `_load_ports()`, `_save_ports()`, `_is_port_free()` - Port management utilities
+- `_safe_pod_name()`, `get_available_port()`, `release_port()` - Pod naming and port allocation
+- `detect_app_type()` - Detects application type
+- `generate_containerfile()` - Generates Containerfile
+- `build_image()`, `_force_destroy_pod()`, `_create_pod()` - Image building and pod creation
+- `health_check()`, `spin_up_pod()` - Health monitoring and pod lifecycle management
+- `_kill_pod_on_port()`, `_get_logs()` - Pod cleanup and log retrieval
+- `destroy_pod()`, `get_pod_status()`, `get_pod_status_by_name()` - Pod status operations
+- `list_pods()`, `get_pod_logs()`, `get_pod_logs_by_name()` - Pod listing and log access
+- `http_get()` - HTTP client utility
+- `_agent_state` - Agent state tracking
+- `set_agent_state()`, `get_agent_port()` - State management
+- `POD_TOOL_DEFINITIONS` - Tool definitions for pod operations
+- `execute_pod_tool()` - Pod tool execution
+- `_pt_list_files()`, `_pt_read_file()`, `_pt_edit_file()` - Pod tool implementations
 
-Now I'm looking at the test agent implementation with its two-phase approach for planning and execution.
+### backend/test_agent.py
+- `_now()` - Timestamp utility
+- `load_source_batch()` - Batch loads source files
+- `_discover_project_files()` - Discovers project files
+- `PLAN_SYSTEM_PROMPT` - System prompt for test planning
+- `plan_tests()` - Plans test cases
+- `run_tests()` - Executes tests
+- `_run_setup_steps()` - Runs setup steps for tests
+- `_run_api_test()` - Runs API tests
+- `_run_browser_test()` - Runs browser tests with Playwright
+- `_run_unit_test()` - Runs unit tests
+- `format_failures_as_message()` - Formats test failures
+- `send_to_chat_pipeline()` - Sends results to chat
+- `test_and_fix_loop()` - Automated test-fix loop
+- `handle_test_agent()` - Handles test agent tool requests
 
-Continuing through the frontend components, there's the main application interface with sidebar navigation, chat functionality, project management, todo tracking, heartbeat visualization, configuration management, and branch testing features, plus various UI elements like message rendering, modals, and markdown processing.
+### backend/constants.py
+- Defines all constants
 
-I'm also noting the key constants that define project roots, ports, storage limits, and agent configuration parameters.
+### frontend/index.html
+- `escHtml()`, `showView()`, `setActiveProject()` - Utility functions for HTML escaping, view management, and project selection
+- `addMsg()`, `appendMsg()` - Message handling functions
+- `sendMessage()`, `startStream()` - Message sending and streaming functionality
+- `showSuccess()`, `showError()` - Feedback display functions
+- `loadConfig()`, `saveConfig()` - Configuration management
+- `applyProvider()` - Provider application logic
+- `loadProjects()` - Project loading
+- `createProject()`, `selectProject()`, `deleteProject()` - Project CRUD operations
+- `initChat()`, `clearMessages()` - Chat initialization and message clearing
+- `showCtxMap()` - Context map display
+- `loadTodos()` - Todo list loading
+- `addTodo()`, `runTodo()`, `deleteTodo()` - Todo operations
+- `loadHeartbeat()` - Heartbeat loading
+- `updateHeartbeat()` - Heartbeat updates
+- `runHeartbeatNow()` - Immediate heartbeat execution
+- `showTodoDetail()` - Todo detail display
+- `_extractIssues()`, `renderMarkdownSimple()` - Issue extraction and markdown rendering
+- `checkBranchStatus()`, `_showBranchIdle()` - Branch status checking and display
+- `wipeBranch()`, `deployBranch()` - Branch management operations
+- `pollHeartbeatProgress()` - Heartbeat progress polling
+
+I'm consolidating the tools, todos, and heartbeat management functions, then mapping out the root-level documentation files that document the overall system architecture and data flows.
 </think>
 
 # Site Map
 
 ## backend/
-### app.py — FastAPI server with all API route registration
-  - app (FastAPI instance) — root ASGI app
-  - lifespan() — startup/shutdown event handler
-  - add_routes() — registers all route modules to the app
+### app.py — FastAPI app, all top-level API routes
+  - create_app() — Assembles routes and lifespan
+  - `@router.post /api/config` — Update provider config
+  - `@router.get /api/config` — Get current config
+  - `@router.get /api/projects` — List all projects
+  - `@router.get /api/projects/{project}` — Get project metadata
+  - `@router.delete /api/projects/{project}` — Delete project
+  - `@router.post /api/pods` — Create a pod from project
+  - `@router.delete /api/pods/{session_id}` — Destroy pod
+  - `@router.post /api/pods/{session_id}/restart` — Restart pod
+  - `@router.get /api/pods` — List all running pods
+  - `@router.get /api/pods/{session_id}/logs` — Get pod logs
+  - `@router.get /health` — Health check endpoint
 
-### state.py — Global config, provider, and SSE state management
-  - config — global config dict (selected provider, API keys)
-  - _get_provider() — returns current provider dict (api_key, base_url, model)
-  - _pod_url() — returns pod URL string
-  - sse_event() — creates SSE-formatted event dict (event, data)
-  - _is_readonly_tool_call() — checks if a tool is read-only
-  - _direct_state — per-request pipeline state (project_dir, project_name, port)
-  - DIRECT_AGENT_PROMPT — system prompt string for direct agent
-  - DIRECT_TOOL_DEFS — tool definitions list sent to LLM
-  - TODO_TD_REVIEW_PROMPT — TD review prompt for post-task analysis
+### state.py — Global config dict, provider helpers, prompts
+  - `config` dict — Global app config
+  - `_get_provider()` — Returns active provider credentials
+  - `_pod_url()` — Constructs pod URL for a project
+  - `sse_event()` — Formats SSE event string
+  - `_is_readonly_tool_call()` — Checks if tool makes no changes
+  - `_direct_state` dict — Direct mode session state
+  - `DIRECT_AGENT_PROMPT` — Agent system prompt string
+  - `DIRECT_TOOL_DEFS` — Tool schemas sent to LLM
+  - `TODO_TD_REVIEW_PROMPT` — TD review system prompt
 
-### pipeline.py — Single chat pipeline: planning → coding → testing → TD review
-  - _trim_messages() — trims stale/redundant content from message history
-  - create_or_select_project() [/api/direct/start] — creates or resumes a project, returns stream URL
-  - run_chat_pipeline() [/api/direct/stream] — SSE streaming endpoint for full agent loop
-  - event_generator() — async generator: planning turn, coding loop, test phase, TD review, done
+### pipeline.py — Direct chat pipeline: start, stream, SSE events
+  - `_trim_messages()` — Trims stale content from message history
+  - `@router.post /api/direct/start` — create_or_select_project() — Creates or reopens project, returns stream URL
+  - `@router.get /api/direct/stream` — run_chat_pipeline() — Main SSE streaming endpoint, full agent loop
 
-### heartbeat.py — Todo scheduler, executor via internal HTTP, and heartbeat API routes
-  - _execute_todo_via_chat() — executes a todo via internal SSE stream calls
-  - _heartbeat_scheduler() — background loop that checks schedules and triggers todos
-  - api_get_todos() [/api/direct/todos/{project_dir}] — list all todos
-  - api_add_todo() [/api/direct/todos/{project_dir}] — create a new todo
-  - api_update_todo() [/api/direct/todos/{project_dir}/{todo_id}] — update todo status/result
-  - api_get_todo() [/api/direct/todos/{project_dir}/{todo_id}] — get single todo with schedule info
-  - api_delete_todo() [/api/direct/todos/{project_dir}/{todo_id}] — delete a todo
-  - api_get_heartbeat() [/api/direct/heartbeat/{project_dir}] — get heartbeat config and progress
-  - update_heartbeat_config() [/api/direct/heartbeat/{project_dir}] — enable/disable/configure heartbeat
-  - trigger_heartbeat_now() [/api/direct/heartbeat/{project_dir}/run] — run next pending todo immediately
-  - get_heartbeat_progress() [/api/platform/heartbeat-progress] — get live execution progress
+### heartbeat.py — Todo executor, scheduler, todo/heartbeat routes
+  - `_execute_todo_via_chat()` — Executes a todo by calling chat endpoints internally
+  - `_heartbeat_scheduler()` — Background loop, fires todos on interval
+  - `@router.get /api/direct/todos/{project_dir}` — api_get_todos() — List all todos
+  - `@router.post /api/direct/todos/{project_dir}` — api_add_todo() — Create a todo
+  - `@router.put /api/direct/todos/{project_dir}/{todo_id}` — api_update_todo() — Update todo status
+  - `@router.get /api/direct/todos/{project_dir}/{todo_id}` — api_get_todo() — Get single todo with schedule info
+  - `@router.delete /api/direct/todos/{project_dir}/{todo_id}` — api_delete_todo() — Delete a todo
+  - `@router.get /api/direct/heartbeat/{project_dir}` — api_get_heartbeat() — Get heartbeat config + next run estimate
+  - `@router.post /api/direct/heartbeat/{project_dir}` — update_heartbeat_config() — Enable/disable/configure heartbeat
+  - `@router.post /api/direct/heartbeat/{project_dir}/run` — trigger_heartbeat_now() — Run next pending todo immediately
+  - `@router.get /api/platform/heartbeat-progress` — get_heartbeat_progress() — Live progress of running heartbeat task
 
-### platform_routes.py — Branch/prod sync management routes
-  - get_branch_status() [/api/platform/branch-status] — compare branch vs prod source files
-  - wipe_branch() [/api/platform/branch-wipe] — copy prod → branch and restart branch server
-  - deploy_branch() [/api/platform/branch-deploy] — copy branch → prod and restart prod server
+### platform_routes.py — Branch/prod management: wipe, deploy, status
+  - `_IS_BRANCH` — Whether server is running on branch port
+  - `@router.get /api/platform/branch-status` — get_branch_status() — Compares branch vs prod source files
+  - `@router.post /api/platform/branch-wipe` — wipe_branch() — Copies prod → branch, clears caches, restarts branch
+  - `@router.post /api/platform/branch-deploy` — deploy_branch() — Copies branch → prod, restarts prod
 
-### history.py — Conversation persistence, summarization, and history listing
-  - _save_conversation() — save a completed conversation to disk as JSON
-  - _load_conversation_history() — load recent conversations as formatted text
-  - _summarize_old_conversations() — LLM summarization of old conversations
-  - erase_history() [DELETE /api/direct/history/{project_dir}] — delete all history for a project
-  - list_project_conversations() [GET /api/direct/history/{project_dir}] — list recent conversations
+### history.py — Conversation persistence, list, erase
+  - `_save_conversation()` — Saves conversation to disk as JSON
+  - `_load_conversation_history()` — Loads recent conversations as text for system prompt
+  - `_summarize_old_conversations()` — LLM summarises old conversations to save tokens
+  - `@router.delete /api/direct/history/{project_dir}` — erase_history() — Deletes all conversation history
+  - `@router.get /api/direct/history/{project_dir}` — list_project_conversations() — Lists recent conversations
 
-### td.py — Technical Director review and cross-project analysis
-  - _parse_td_verdict() — parses STATUS: line from TD review text
-  - run_td_analysis() [POST /api/td-analysis] — run full TD analysis across all projects
-  - get_latest_td_analysis() [GET /api/td-analysis] — fetch most recent TD report
-  - list_td_reports() [GET /api/td-reports] — list all saved TD reports
-  - get_td_report() [GET /api/td-reports/{timestamp}] — fetch specific TD report
+### td.py — Technical Director review, analysis reports
+  - `TD_ANALYSIS_PROMPT` — System prompt for multi-conversation TD analysis
+  - `_parse_td_verdict()` — Parses STATUS: line from TD review
+  - `@router.post /api/td-analysis` — run_td_analysis() — Runs TD analysis across all projects
+  - `@router.get /api/td-analysis` — get_latest_td_analysis() — Returns most recent TD report
+  - `@router.get /api/td-reports` — list_td_reports() — Lists all saved TD reports
+  - `@router.get /api/td-reports/{timestamp}` — get_td_report() — Returns specific TD report by timestamp
 
-### docs.py — Auto-documentation regeneration after each chat completion
-  - _regenerate_docs() — parallel LLM generation of SPEC.md, CONTEXT_MAP.md, DATA_FLOW.md, SITE_MAP.md
-  - _gen_context_map() — generates CONTEXT_MAP.md (file structure, endpoints, tools)
-  - _gen_data_flow() — generates DATA_FLOW.md (message flow, tool loop, memory, heartbeat)
-  - _gen_spec() — generates SPEC.md (project overview, features, tech stack)
-  - _gen_site_map() — generates SITE_MAP.md (compact file tree)
+### docs.py — Auto-documentation regeneration
+  - `_regenerate_docs()` — Regenerates SPEC.md, CONTEXT_MAP.md, DATA_FLOW.md, SITE_MAP.md in parallel
 
-### tools.py — File tools for the LLM + dual-cache for platform editing
-  - set_active_project() — set current active project directory
-  - get_active_project() — get current active project directory
-  - init_project_dir() — create project dir with starter files and project_env.md
-  - write_project_env() — write project_env.md metadata file
-  - read_project_env() — parse project_env.md metadata
-  - rename_project() — update project name in project_env.md
-  - file_cache_get() — get cached file content (branch-aware for platform project)
-  - file_cache_set() — set cached file content
-  - file_cache_set_main() — directly set main cache (used during init/wipe)
-  - file_cache_wipe_branch() — sync main cache → branch cache (on branch wipe)
-  - file_cache_deploy_to_main() — sync branch cache → main cache (on deploy)
-  - file_cache_clear() — clear cache for a project or all
-  - execute_tool() — dispatches tool calls to executor functions
-  - _tool_list_files() — list files in project directory
-  - _tool_read_file() — read file with cache (cache-first, truncate large files)
-  - _tool_edit_file() — create or overwrite file
-  - _tool_patch_file() — targeted find-and-replace edit (exact match)
-  - _tool_read_file_tail() — read last N lines with truncation detection
-  - _tool_grep_code() — case-insensitive search across all project files
-  - _tool_read_lines() — read a specific line range with ±20-line padding
-  - _tool_read_project() — read all source files or return listing if over budget
+### tools.py — File tools for the LLM agent (read/write/patch/list/grep)
+  - `_SAFE_ROOTS` — Allowed symlink root directories
+  - `_active_project_dir` dict — Current active project
+  - `_file_cache_main` / `_file_cache_branch` — Dual file caches for platform editing
+  - `_is_platform_project()` — Checks if project is the platform self-editing project
+  - `file_cache_get()` / `file_cache_set()` / `file_cache_set_main()` — Cache access
+  - `file_cache_wipe_branch()` — Copies main cache → branch cache
+  - `file_cache_deploy_to_main()` — Copies branch cache → main cache
+  - `file_cache_clear()` — Clears cache for a project
+  - `_is_safe_path()` — Validates path is within project or safe roots
+  - `set_active_project()` / `get_active_project()` — Active project management
+  - `init_project_dir()` — Initialises new project directory
+  - `write_project_env()` / `read_project_env()` / `rename_project()` — project_env.md management
+  - `TOOL_DEFINITIONS` — JSON schemas sent to LLM for all file tools
+  - `execute_tool()` — Dispatches tool call to implementation
+  - `_tool_list_files()` — Lists files in project directory
+  - `_tool_read_file()` — Reads file (returns from cache if unchanged)
+  - `_tool_edit_file()` — Creates or overwrites a file
+  - `_tool_patch_file()` — Targeted edit: finds old_text, replaces with new_text
+  - `_tool_read_file_tail()` — Reads last N lines of a file
+  - `_tool_grep_code()` — Case-insensitive search across all project files
+  - `_tool_read_lines()` — Reads specific line range with padding
+  - `_tool_read_project()` — Reads all source files; returns listing if over budget
 
-### direct_todo.py — Todo list per project + heartbeat auto-execution config
-  - add_todo() — create a todo item (feature, debug, question, refactor)
-  - _classify_result() — classify result as success, partial, or failure
-  - update_todo() — update todo status (pending, attempted, done) and record result
-  - delete_todo() — delete a todo by ID
-  - get_todos() — get all todos for a project
-  - get_pending_todos() — get pending/attempted todos (heartbeat queue)
-  - get_todo() — get single todo by ID
-  - get_heartbeat() — get heartbeat config for a project
-  - save_heartbeat() — persist heartbeat config to disk
-  - record_heartbeat_run() — log a heartbeat execution to history
-  - set_todo_review() — attach TD review and authoritative status to a completed todo
+### direct_todo.py — Todo list and heartbeat config per project
+  - `_now()` — Returns UTC timestamp string
+  - `_todo_path()` / `_load_todos()` / `_save_todos()` — Todo file I/O helpers
+  - `add_todo()` — Adds a new todo item
+  - `_classify_result()` — Classifies result text as success/failure/partial
+  - `update_todo()` — Updates todo status, timestamps, result
+  - `delete_todo()` / `get_todos()` / `get_pending_todos()` / `get_todo()` — Todo retrieval
+  - `get_heartbeat()` / `save_heartbeat()` / `record_heartbeat_run()` — Heartbeat config management
+  - `set_todo_review()` — Attaches TD review to a completed todo
 
-### llm_client.py — Minimal LLM client for OpenRouter and MiniMax
-  - call_llm() — single API call with retry logic (429, 502, 503, 504)
-  - extract_response() — parse LLM response into type + content + tool_calls
+### llm_client.py — Minimal LLM HTTP client (OpenRouter, MiniMax)
+  - `LLMError` — Exception for API failures after retries
+  - `call_llm()` — Makes single LLM API call with retry
+  - `extract_response()` — Parses LLM response, handles tool_calls
 
-### pod.py — Container lifecycle: build, run, health-check, logs, diagnostics
-  - _load_ports() — load port allocations from .ports.json
-  - _save_ports() — persist port allocations to .ports.json
-  - _is_port_free() — OS-level port availability check
-  - _safe_pod_name() — sanitize project name to valid podman pod name
-  - get_available_port() — find unused port (checks JSON, podman, and OS)
-  - release_port() — free a port allocation
-  - detect_app_type() — detect fastapi, flask, static, or python-http
-  - generate_containerfile() — generate Containerfile for detected app type
-  - build_image() — podman build with Containerfile
-  - _force_destroy_pod() — immediate podman pod removal
-  - _create_pod() — podman pod create + container run
-  - health_check() — poll HTTP endpoint until 200 or max retries
-  - spin_up_pod() — full lifecycle: destroy old → build → create → health check
-  - _kill_pod_on_port() — find and destroy pod using a specific port
-  - _get_logs() — read container stdout/stderr
-  - destroy_pod() — stop and remove pod (legacy by session ID)
-  - get_pod_status() — get pod status by session ID
-  - get_pod_status_by_name() — get pod status by pod name
-  - list_pods() — list all aelimini pods
-  - get_pod_logs() — get container logs by session ID
-  - get_pod_logs_by_name() — get container logs by pod name
-  - http_get() — HTTP GET with status and body
-  - set_agent_state() — set state for Diagnostics agent tool executors
-  - get_agent_port() — get current agent port
-  - execute_pod_tool() — dispatch pod tool calls to executor functions
-  - _pt_list_files() — list files in generated project
-  - _pt_read_file() — read file in generated project
-  - _pt_edit_file() — write file in generated project
+### pod.py — Podman pod lifecycle: build, run, health check
+  - `PORT_RANGE` / `PORT_FILE` / `INTERNAL_PORT` — Port configuration
+  - `_load_ports()` / `_save_ports()` / `_is_port_free()` — Port file management
+  - `_safe_pod_name()` — Converts project name to safe podman name
+  - `get_available_port()` — Finds unused port in range
+  - `release_port()` — Releases port allocation
+  - `detect_app_type()` — Detects FastAPI/Flask/static from project files
+  - `generate_containerfile()` — Generates Containerfile for app type
+  - `build_image()` — Runs podman build
+  - `_force_destroy_pod()` / `_create_pod()` — Pod lifecycle primitives
+  - `health_check()` — Polls pod until HTTP 200
+  - `spin_up_pod()` — Full lifecycle: destroy old → build → create → health check
+  - `_kill_pod_on_port()` / `_get_logs()` — Debug helpers
+  - `destroy_pod()` / `get_pod_status()` / `get_pod_status_by_name()` — Legacy status calls
+  - `list_pods()` / `get_pod_logs()` / `get_pod_logs_by_name()` — Log/listing helpers
+  - `http_get()` — Makes HTTP GET request, returns status + body
+  - `_agent_state` dict — Agent tool state
+  - `set_agent_state()` / `get_agent_port()` — State accessors
+  - `POD_TOOL_DEFINITIONS` — Tool schemas for Diagnostics agent
+  - `execute_pod_tool()` — Dispatches pod tool to implementation
+  - `_pt_list_files()` / `_pt_read_file()` / `_pt_edit_file()` — Pod tool implementations
 
 ### test_agent.py — Two-phase automated testing: plan then run, with fix loop
-  - load_source_batch() — load all source files as concatenated string for LLM
-  - _discover_project_files() — find all source files in a project directory
-  - plan_tests() — Phase 1: LLM generates structured JSON test plan
-  - _run_setup_steps() — execute API setup/precondition steps before each test
-  - run_tests() — Phase 2: execute all test cases (api, browser, unit)
-  - _run_api_test() — execute API test case with status/field assertions
-  - _run_browser_test() — execute Playwright browser test case
-  - _run_unit_test() — execute Python unit test via direct import
-  - format_failures_as_message() — format test failures as message for chat pipeline
-  - send_to_chat_pipeline() — send message through SSE stream internally
-  - test_and_fix_loop() — full loop: plan → run → if fail send to chat → re-run
-  - handle_test_agent() — tool entry point called from chat agent
+  - `_now()` — Timestamp helper
+  - `load_source_batch()` — Concatenates all platform source files for LLM
+  - `_discover_project_files()` — Finds source files in a project directory
+  - `PLAN_SYSTEM_PROMPT` — System prompt for test planning LLM
+  - `plan_tests()` — Phase 1: LLM generates JSON test plan from source
+  - `run_tests()` — Phase 2: Executes each test case
+  - `_run_setup_steps()` — Runs precondition setup steps via httpx
+  - `_run_api_test()` — Executes API test case via httpx
+  - `_run_browser_test()` — Executes Playwright browser test case
+  - `_run_unit_test()` — Executes Python unit test via importlib
+  - `format_failures_as_message()` — Formats test failures for chat pipeline
+  - `send_to_chat_pipeline()` — Sends message through chat SSE stream
+  - `test_and_fix_loop()` — Full loop: plan → run → fix → re-run up to N iterations
+  - `handle_test_agent()` — Tool interface entry point called from agent
+  - CLI `main()` — Runs test agent from command line
 
 ### constants.py — Single source of truth for all shared constants
-  - All paths, ports, timeouts, budgets, truncation limits, platform file lists
-
-### main.py — (referenced in PLATFORM_SOURCE_FILES) — app router entry point
+  - Path constants (BACKEND_DIR, PROD_ROOT, BRANCH_ROOT, PROJECTS_ROOT, etc.)
+  - Port constants (PROD_PORT, BRANCH_PORT, POD_PORT_RANGE, etc.)
+  - Platform file lists (PLATFORM_SOURCE_FILES, PLATFORM_DATA_DIRS, etc.)
+  - Agent limits (MAX_ACTION_TURNS, MAX_TEST_FIX_ITERATIONS, etc.)
+  - Timeout constants (SUBPROCESS_TIMEOUT, LLM_STREAM_TIMEOUT, etc.)
+  - LLM client constants (LLM_TIMEOUT, LLM_MAX_RETRIES, etc.)
+  - File reading/truncation limits (READ_FILE_TRUNCATE, TRUNCATE_TOOL_RESULT, etc.)
 
 ## frontend/
-### index.html — Full standalone agent UI with chat, todos, heartbeat, config, branch testing
-  - init() — app initialization, loads projects and checks branch status
-  - loadProjects() — fetch and render sidebar project list
-  - loadChat() — load messages for selected project
-  - loadTodos() — fetch and render todo list for active project
-  - loadHeartbeat() — fetch and render heartbeat config and history
-  - addMsg() — append message bubble to chat
-  - sendMessage() — POST to /api/direct/start and open EventSource stream
-  - onEvent() — handle all SSE event types (phase, thinking, tool_call, tool_result, response, test_phase, test_feedback, td_review, done, error)
-  - showTodoDetail() — render todo detail modal overlay
-  - saveTodo() — POST to create a new todo
-  - deleteTodo() — DELETE a todo
-  - runTodo() — trigger heartbeat run for a specific todo
-  - toggleHeartbeat() — enable/disable heartbeat via POST
-  - runHeartbeatNow() — POST to trigger immediate heartbeat execution
-  - switchView() — toggle between chat and config views
-  - showConfig() — render config provider form
-  - saveConfig() — POST updated provider config
-  - selectProject() — switch active project in sidebar
-  - newProject() — create new project directory
-  - loadCtxMap() — fetch CONTEXT_MAP.md and render in modal
-  - openPod() — open generated app URL in new tab
-  - renderMarkdownSimple() — basic markdown to HTML renderer
-  - renderTodoDetailModal() — build todo detail modal HTML
-  - checkBranchStatus() — fetch branch status and update branch bar
-  - wipeBranch() — POST to /api/platform/branch-wipe
-  - deployBranch() — POST to /api/platform/branch-deploy
-  - pollHeartbeatProgress() — poll heartbeat progress and update branch bar live
+### index.html — Full standalone UI: chat, sidebar, config, todos, heartbeat, branch testing
+  - `escHtml()` — HTML-safe escape utility
+  - `showView()` — Switches between chat and config views
+  - `setActiveProject()` — Sets active project in sidebar
+  - `addMsg()` / `appendMsg()` — Adds rendered message to chat
+  - `sendMessage()` — Sends user message, opens SSE stream
+  - `startStream()` — Consumes SSE stream events
+  - `showSuccess()` / `showError()` — Shows result banners
+  - `loadConfig()` / `saveConfig()` / `applyProvider()` — Config CRUD and apply
+  - `loadProjects()` — Loads and renders sidebar project list
+  - `createProject()` / `selectProject()` / `deleteProject()` — Project management
+  - `initChat()` / `clearMessages()` — Chat initialisation
+  - `showCtxMap()` — Renders context map in right panel
+  - `loadTodos()` / `addTodo()` / `runTodo()` / `deleteTodo()` — Todo list management
+  - `loadHeartbeat()` / `updateHeartbeat()` / `runHeartbeatNow()` — Heartbeat UI control
+  - `showTodoDetail()` — Renders todo detail modal with timeline and TD review
+  - `_extractIssues()` / `renderMarkdownSimple()` — Issue extraction and markdown rendering
+  - `checkBranchStatus()` / `_showBranchIdle()` — Checks and displays branch/prod diff status
+  - `wipeBranch()` / `deployBranch()` — Triggers branch wipe or prod deploy
+  - `pollHeartbeatProgress()` — Polls and displays live heartbeat execution progress
 
 ## Root docs/
-  - SPEC.md — project specification (auto-generated)
-  - CONTEXT_MAP.md — file structure, endpoints, tools, data formats (auto-generated)
-  - DATA_FLOW.md — message flow, tool loop, memory, heartbeat, deploy traces (auto-generated)
-  - SITE_MAP.md — this file — compact file tree (auto-generated)
+  - SPEC.md — Project overview, features, tech stack, how to run
+  - CONTEXT_MAP.md — File structure, endpoints, tools, data formats
+  - DATA_FLOW.md — Trace of message flow, tool loop, memory, deployment
+  - SITE_MAP.md — This file — compact file/function tree

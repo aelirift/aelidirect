@@ -211,17 +211,25 @@ async function createNewProject() {
   const name = prompt('New project name:');
   if (!name || !name.trim()) return;
 
-  // Set up the project bar with the name, let user type what to build
+  // Clear state for new project
   state.pendingProjectName = name.trim();
   state.projectDir = '';
+  state.projectName = name.trim();
+
+  // Show project bar with new name
   document.getElementById('project-bar').style.display = 'flex';
   document.getElementById('project-bar-name').textContent = name.trim();
-  document.getElementById('project-bar-dir').textContent = '';
+  document.getElementById('project-bar-dir').textContent = '(new)';
 
-  // Clear welcome
-  const container = document.getElementById('messages');
-  const welcome = document.getElementById('welcome');
-  if (welcome) welcome.remove();
+  // Clear ALL messages — fresh start
+  document.getElementById('messages').innerHTML = '';
+
+  // Reset pod bar, turn counter
+  document.getElementById('pod-bar').style.display = 'none';
+  document.getElementById('turn-counter').textContent = '';
+
+  // Switch to chat view
+  showView('view-chat');
 
   addMsg('phase', 'New project: ' + name.trim() + ' — type what you want to build.');
   document.getElementById('chat-input').focus();

@@ -10,6 +10,7 @@ import asyncio
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from constants import PROD_PORT
 from state import config, _save_config, _get_provider, _heartbeat_progress
@@ -136,6 +137,8 @@ async def get_platform_docs():
 
 # ── Serve frontend ────────────────────────────────────────────────────
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+
+app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 
 @app.get("/")
